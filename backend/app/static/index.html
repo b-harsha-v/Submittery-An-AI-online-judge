@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Submittery v2 — AI-Powered Distributed Online Judge</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome for Premium Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Markdown Parser -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    
+    <!-- KaTeX for math formulas -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Outfit', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        brand: {
+                            50: 'var(--brand-50)',
+                            100: 'var(--brand-100)',
+                            500: 'var(--brand-500)',
+                            600: 'var(--brand-600)',
+                            700: 'var(--brand-700)',
+                        },
+                        dark: {
+                            50: 'var(--dark-50)',
+                            100: 'var(--dark-100)',
+                            200: 'var(--dark-200)',
+                            300: 'var(--dark-300)',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root {
+            --brand-50: #130f22;
+            --brand-100: #1b182b;
+            --brand-500: #c084fc;
+            --brand-600: #a78bfa;
+            --brand-700: #8b5cf6;
+            
+            --dark-50: #1c1929;
+            --dark-100: #0d0b14;
+            --dark-200: #050508;
+            --dark-300: #000000;
+        }
+
+        body.light-mode {
+            --brand-50: #faf5ff;
+            --brand-100: #f3e8ff;
+            --brand-500: #a855f7;
+            --brand-600: #8b5cf6;
+            --brand-700: #7c3aed;
+            
+            --dark-50: #f8fafc;
+            --dark-100: #f1f5f9;
+            --dark-200: #ffffff;
+            --dark-300: #f8fafc;
+        }
+
+        /* Light Mode specific element overrides */
+        body.light-mode {
+            background-color: #f8fafc !important;
+            color: #334155 !important;
+        }
+        body.light-mode .text-slate-200, 
+        body.light-mode .text-slate-300, 
+        body.light-mode .text-slate-400,
+        body.light-mode .text-slate-100 {
+            color: #334155 !important;
+        }
+        body.light-mode .text-slate-500,
+        body.light-mode .text-slate-550,
+        body.light-mode .text-slate-600 {
+            color: #64748b !important;
+        }
+        body.light-mode h1, 
+        body.light-mode h2, 
+        body.light-mode h3, 
+        body.light-mode h4,
+        body.light-mode .font-bold {
+            color: #0f172a !important;
+        }
+        body.light-mode .border-slate-800,
+        body.light-mode .border-slate-850,
+        body.light-mode .border-slate-700 {
+            border-color: rgba(168, 85, 247, 0.12) !important;
+        }
+        body.light-mode .bg-black\/30,
+        body.light-mode .bg-black\/40 {
+            background-color: rgba(168, 85, 247, 0.04) !important;
+            border-color: rgba(168, 85, 247, 0.08) !important;
+        }
+        body.light-mode .glass-card {
+            background: rgba(255, 255, 255, 0.9) !important;
+            border-color: rgba(168, 85, 247, 0.12) !important;
+            box-shadow: 0 4px 20px -2px rgba(168, 85, 247, 0.05);
+        }
+        body.light-mode #brand-logo-text {
+            background-image: linear-gradient(to right, #0f172a, var(--brand-500)) !important;
+        }
+
+        /* Light Mode tags and buttons adjustments */
+        body.light-mode span.bg-slate-800,
+        body.light-mode span.text-slate-450 {
+            background-color: #f3e8ff !important;
+            color: #8b5cf6 !important;
+            border-color: rgba(168, 85, 247, 0.15) !important;
+        }
+        body.light-mode button.bg-slate-800,
+        body.light-mode button.bg-slate-850 {
+            background-color: #f1f5f9 !important;
+            color: #475569 !important;
+            border-color: rgba(168, 85, 247, 0.15) !important;
+        }
+        body.light-mode button.bg-slate-800:hover,
+        body.light-mode button.bg-slate-850:hover {
+            background-color: #e2e8f0 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode button[onclick*="openWorkspace"],
+        body.light-mode td button {
+            background-color: #f3e8ff !important;
+            color: #8b5cf6 !important;
+            border-color: rgba(168, 85, 247, 0.2) !important;
+        }
+        body.light-mode button[onclick*="openWorkspace"]:hover,
+        body.light-mode td button:hover {
+            background-color: #8b5cf6 !important;
+            color: #ffffff !important;
+            border-color: transparent !important;
+        }
+        body.light-mode button[onclick*="navigateTo('collab')"],
+        body.light-mode button[onclick*="createCollaborationRoom"] {
+            background-color: #f1f5f9 !important;
+            color: #334155 !important;
+            border-color: rgba(168, 85, 247, 0.15) !important;
+        }
+        body.light-mode button[onclick*="navigateTo('collab')"]:hover,
+        body.light-mode button[onclick*="createCollaborationRoom"]:hover {
+            background-color: #e2e8f0 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode .bg-slate-800 {
+            background-color: #e2e8f0 !important;
+        }
+        body.light-mode .h-10.bg-dark-200,
+        body.light-mode .bg-dark-200\/90 {
+            background-color: #f1f5f9 !important;
+            border-color: rgba(168, 85, 247, 0.15) !important;
+        }
+        body.light-mode .hover\:text-slate-200:hover {
+            color: #0f172a !important;
+        }
+        body.light-mode input,
+        body.light-mode select,
+        body.light-mode textarea {
+            background-color: #ffffff !important;
+            color: #0f172a !important;
+            border-color: rgba(168, 85, 247, 0.2) !important;
+        }
+        body.light-mode input:focus,
+        body.light-mode select:focus,
+        body.light-mode textarea:focus {
+            border-color: #8b5cf6 !important;
+            box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.1) !important;
+        }
+
+        /* Scrollbars styling */
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--dark-300);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--brand-100);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--brand-500);
+        }
+        
+        .glass-card {
+            background: rgba(5, 5, 8, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(192, 132, 252, 0.08);
+        }
+
+        /* Lucida Sans Logo style */
+        .logo-font {
+            font-family: "Lucida Sans Unicode", "Lucida Grande", "Lucida Sans", Geneva, sans-serif;
+            font-weight: 800;
+            letter-spacing: -0.04em;
+        }
+
+        /* Draggable splitter handle */
+        .resize-handle-v {
+            width: 6px;
+            cursor: col-resize;
+            background: var(--dark-200);
+            transition: background 0.2s;
+        }
+        .resize-handle-v:hover, .resize-handle-v.dragging {
+            background: var(--brand-500);
+        }
+
+        .resize-handle-h {
+            height: 6px;
+            cursor: row-resize;
+            background: var(--dark-200);
+            transition: background 0.2s;
+        }
+        .resize-handle-h:hover, .resize-handle-h.dragging {
+            background: var(--brand-500);
+        }
+        
+        .view-section {
+            display: none;
+        }
+        .view-section.active {
+            display: flex;
+        }
+    </style>
+</head>
+<body class="bg-dark-300 text-slate-200 font-sans min-h-screen flex flex-col antialiased overflow-hidden">
+
+    <!-- Top Navigation Header -->
+    <header class="h-14 border-b border-slate-800 bg-dark-200/90 backdrop-blur-md px-6 flex items-center justify-between z-40 shrink-0">
+        <div class="flex items-center space-x-8">
+            <!-- Brand Logo -->
+            <div onclick="navigateTo('home')" class="flex items-center space-x-2.5 cursor-pointer">
+                <div class="h-8 w-8 bg-gradient-to-tr from-brand-600 to-purple-400 rounded-lg flex items-center justify-center shadow-lg shadow-brand-500/10">
+                    <i class="fa-solid fa-code text-white text-sm"></i>
+                </div>
+                <span id="brand-logo-text" class="text-lg logo-font bg-gradient-to-r from-white to-brand-500 bg-clip-text text-transparent">Submittery</span>
+            </div>
+
+            <!-- Page Tabs Navigation -->
+            <nav class="hidden sm:flex items-center space-x-1">
+                <button id="nav-home" onclick="navigateTo('home')" class="px-3.5 py-1.5 rounded-lg text-sm font-semibold text-brand-500 bg-brand-500/10 transition">
+                    <i class="fa-solid fa-house mr-1.5"></i>Home
+                </button>
+                <button id="nav-dashboard" onclick="navigateTo('dashboard')" class="px-3.5 py-1.5 rounded-lg text-sm font-semibold text-slate-400 hover:text-slate-200 transition">
+                    <i class="fa-solid fa-list mr-1.5"></i>Problems
+                </button>
+                <button id="nav-collab" onclick="navigateTo('collab')" class="px-3.5 py-1.5 rounded-lg text-sm font-semibold text-slate-400 hover:text-slate-200 transition">
+                    <i class="fa-solid fa-user-group mr-1.5"></i>Pair Coding
+                </button>
+                <button id="nav-admin" onclick="navigateTo('admin')" class="hidden px-3.5 py-1.5 rounded-lg text-sm font-semibold text-slate-400 hover:text-slate-200 transition">
+                    <i class="fa-solid fa-user-shield mr-1.5"></i>Admin Panel
+                </button>
+            </nav>
+        </div>
+
+        <!-- Right Side: Auth / Profile -->
+        <div class="flex items-center space-x-3">
+            <button onclick="toggleTheme()" class="h-8 w-8 flex items-center justify-center rounded-xl bg-dark-200 hover:bg-dark-50 text-slate-400 hover:text-brand-500 transition border border-slate-800/60" title="Toggle Light/Dark Mode">
+                <i id="theme-toggle-icon" class="fa-solid fa-sun text-xs"></i>
+            </button>
+            <div id="header-auth-box" class="flex items-center space-x-3">
+                <button onclick="showAuthModal()" class="px-3.5 py-1.5 text-sm font-bold rounded-lg bg-brand-500 hover:bg-brand-600 text-dark-300 shadow-md shadow-brand-500/10 transition active:scale-95">
+                    <i class="fa-solid fa-arrow-right-to-bracket mr-1.5"></i>Sign In
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Panels -->
+    <div class="flex-grow relative overflow-hidden flex flex-col">
+
+        <!-- VIEW 1: HOMEPAGE -->
+        <section id="view-home" class="view-section active absolute inset-0 overflow-y-auto p-8 flex-col justify-start space-y-8 max-w-5xl mx-auto">
+            <!-- Welcome Hero -->
+            <div class="glass-card rounded-2xl p-8 border border-slate-800/80 bg-gradient-to-br from-dark-200/50 to-brand-500/5 flex flex-col md:flex-row justify-between items-center gap-6 mt-4">
+                <div class="space-y-3 flex-grow text-center md:text-left">
+                    <h1 class="text-3xl font-extrabold text-slate-100 leading-tight">AI-Powered Distributed <br><span class="bg-gradient-to-r from-brand-500 to-indigo-300 bg-clip-text text-transparent">Online Judge Engine</span></h1>
+                    <p class="text-slate-400 text-sm leading-relaxed">Submittery combines secure containerized sandboxed execution, real-time WebSockets synchronization, and educational AI feedback to provide a premium LeetCode coding workspace.</p>
+                    <div class="flex flex-wrap gap-3 pt-2 justify-center md:justify-start">
+                        <button onclick="navigateTo('dashboard')" class="px-5 py-2 bg-brand-500 hover:bg-brand-600 text-dark-300 text-sm font-bold rounded-xl transition shadow-lg shadow-brand-500/10 active:scale-95">
+                            Explore Problems<i class="fa-solid fa-arrow-right ml-2"></i>
+                        </button>
+                        <button onclick="navigateTo('collab')" class="px-5 py-2 bg-slate-800 hover:bg-slate-750 text-slate-200 text-sm font-semibold rounded-xl border border-slate-700/80 transition active:scale-95">
+                            Start Pair Coding
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Features Card Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Sandbox Card -->
+                <div class="glass-card p-6 rounded-xl border border-slate-800/80 space-y-3">
+                    <div class="h-10 w-10 bg-brand-500/10 text-brand-400 border border-brand-500/20 rounded-xl flex items-center justify-center text-base">
+                        <i class="fa-solid fa-box-archive"></i>
+                    </div>
+                    <h3 class="text-base font-bold text-slate-100">Docker Sandbox Execution</h3>
+                    <p class="text-slate-400 text-sm leading-relaxed">Your python code is executed inside secure, unprivileged ephemeral Docker containers with individual CPU, memory, and networking limits.</p>
+                </div>
+                <!-- Yjs Collab Card -->
+                <div class="glass-card p-6 rounded-xl border border-slate-800/80 space-y-3">
+                    <div class="h-10 w-10 bg-brand-500/10 text-brand-400 border border-brand-500/20 rounded-xl flex items-center justify-center text-base">
+                        <i class="fa-solid fa-users"></i>
+                    </div>
+                    <h3 class="text-base font-bold text-slate-100">Pair Coding Synchronization</h3>
+                    <p class="text-slate-400 text-sm leading-relaxed">Collaborate with peers in real-time. Share room codes, sync code edits in Monaco Editor, and see character updates on the fly.</p>
+                </div>
+                <!-- AI Card -->
+                <div class="glass-card p-6 rounded-xl border border-slate-800/80 space-y-3">
+                    <div class="h-10 w-10 bg-brand-500/10 text-brand-400 border border-brand-500/20 rounded-xl flex items-center justify-center text-base">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i>
+                    </div>
+                    <h3 class="text-base font-bold text-slate-100">Educational AI Mentorship</h3>
+                    <p class="text-slate-400 text-sm leading-relaxed">Receive instant code reviews, time/space complexity analyses, debugging hints for failed tests, or ask custom questions in our chat panel.</p>
+                </div>
+            </div>
+
+            <!-- Platform Stats -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 bg-dark-200/40 p-6 rounded-2xl border border-slate-800/60">
+                <div class="text-center">
+                    <div class="text-2xl font-black text-slate-200">5</div>
+                    <div class="text-xs text-slate-500 uppercase tracking-wider font-bold mt-1">Starter Problems</div>
+                </div>
+                <div class="text-center border-l border-slate-800/60">
+                    <div class="text-2xl font-black text-slate-200 font-mono">1.0s</div>
+                    <div class="text-xs text-slate-500 uppercase tracking-wider font-bold mt-1">Time Limit</div>
+                </div>
+                <div class="text-center border-l border-slate-800/60">
+                    <div class="text-2xl font-black text-slate-200 font-mono">256MB</div>
+                    <div class="text-xs text-slate-500 uppercase tracking-wider font-bold mt-1">Memory Limit</div>
+                </div>
+                <div class="text-center border-l border-slate-800/60">
+                    <div class="text-2xl font-black text-slate-200">100%</div>
+                    <div class="text-xs text-slate-500 uppercase tracking-wider font-bold mt-1">Uptime SLA</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- VIEW 2: USER DASHBOARD & PROBLEMS LIST -->
+        <section id="view-dashboard" class="view-section absolute inset-0 hidden p-6 overflow-hidden md:flex-row gap-6">
+            <!-- Left Side: Profile stats & recent runs -->
+            <div class="w-full md:w-1/3 flex flex-col space-y-6 shrink-0 h-full overflow-y-auto pr-1">
+                <!-- User Progress Tracker Card -->
+                <div class="glass-card p-6 rounded-xl border border-slate-800/80 space-y-4">
+                    <div class="flex items-center space-x-3">
+                        <div id="dash-avatar-container">
+                            <i class="fa-solid fa-circle-user text-4xl text-slate-700"></i>
+                        </div>
+                        <div>
+                            <h3 id="dash-username" class="font-bold text-slate-100 text-sm">Welcome Coder</h3>
+                            <p class="text-xs text-slate-500">Track your algorithm stats</p>
+                        </div>
+                    </div>
+                    
+                    <div class="border-t border-slate-800/60 pt-4 space-y-3">
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-slate-400">Total Solved Ratio</span>
+                            <span id="solved-stats-count" class="font-bold text-brand-400">0 / 5</span>
+                        </div>
+                        <!-- Solved Progress bar -->
+                        <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                            <div id="solved-stats-progressbar" class="h-full bg-gradient-to-r from-brand-600 to-purple-400 transition-all duration-500" style="width: 0%"></div>
+                        </div>                        <!-- Difficulty split details -->
+                        <div class="grid grid-cols-3 gap-2 pt-2 text-center text-xs">
+                            <div class="bg-dark-300 p-2 rounded border border-slate-850">
+                                <div class="text-brand-400 font-bold">Easy</div>
+                                <div id="stats-easy-count" class="text-slate-300 font-bold mt-0.5 text-xs">0</div>
+                            </div>
+                            <div class="bg-dark-300 p-2 rounded border border-slate-850">
+                                <div class="text-amber-400 font-bold">Medium</div>
+                                <div id="stats-medium-count" class="text-slate-300 font-bold mt-0.5 text-xs">0</div>
+                            </div>
+                            <div class="bg-dark-300 p-2 rounded border border-slate-850">
+                                <div class="text-rose-400 font-bold">Hard</div>
+                                <div id="stats-hard-count" class="text-slate-300 font-bold mt-0.5 text-xs">0</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- User Recent Submissions Log -->
+                <div class="glass-card p-6 rounded-xl border border-slate-800/80 flex-grow flex flex-col space-y-3 min-h-[250px]">
+                    <h4 class="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center"><i class="fa-solid fa-clock-rotate-left text-brand-500 mr-2"></i>My Recent Runs</h4>
+                    <div id="dash-submissions-log" class="flex-grow overflow-y-auto space-y-2 pr-1 text-xs">
+                        <div class="text-slate-500 text-center py-10 text-xs">No recent submissions found.</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-grow glass-card rounded-xl border border-slate-800/80 flex flex-col overflow-hidden h-full">
+                <!-- Toolbar filters -->
+                <div class="p-4 border-b border-slate-800 bg-dark-200/30 flex flex-col md:flex-row justify-between items-stretch md:items-center gap-3">
+                    <div class="flex flex-col sm:flex-row flex-grow max-w-2xl gap-3">
+                        <div class="relative flex-grow">
+                            <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-500 text-xs"></i>
+                            <input id="prob-search-input" oninput="filterProblemsList()" type="text" placeholder="Search problems by name..." class="w-full pl-9 pr-4 py-1.5 text-sm bg-dark-300 border border-slate-800 rounded-lg focus:outline-none focus:border-brand-500 text-slate-200 transition">
+                        </div>
+                        <div class="flex items-center space-x-2 shrink-0">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">NeetCode Topic:</label>
+                            <select id="prob-neetcode-topic-select" onchange="filterProblemsList()" class="px-2.5 py-1.5 text-xs bg-dark-300 border border-slate-800 rounded-lg focus:outline-none focus:border-brand-500 text-slate-250 font-semibold">
+                                <option value="all">All Topics</option>
+                                <option value="arrays-hashing">Arrays & Hashing</option>
+                                <option value="two-pointers">Two Pointers</option>
+                                <option value="sliding-window">Sliding Window</option>
+                                <option value="stack">Stack</option>
+                                <option value="binary-search">Binary Search</option>
+                                <option value="linked-list">Linked List</option>
+                                <option value="trees">Trees</option>
+                                <option value="tries">Tries</option>
+                                <option value="heap-priority-queue">Heap / Priority Queue</option>
+                                <option value="backtracking">Backtracking</option>
+                                <option value="graphs">Graphs</option>
+                                <option value="advanced-graphs">Advanced Graphs</option>
+                                <option value="1d-dp">1-D DP</option>
+                                <option value="2d-dp">2-D DP</option>
+                                <option value="greedy">Greedy</option>
+                                <option value="intervals">Intervals</option>
+                                <option value="math-geometry">Math & Geometry</option>
+                                <option value="bit-manipulation">Bit Manipulation</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="flex space-x-1 shrink-0 self-end md:self-auto">
+                        <button onclick="filterProblemsDifficulty('all')" id="diff-btn-all" class="px-2.5 py-1 rounded text-xs font-bold uppercase bg-brand-500/10 text-brand-500 border border-brand-500/20">All</button>
+                        <button onclick="filterProblemsDifficulty('easy')" id="diff-btn-easy" class="px-2.5 py-1 rounded text-xs font-bold uppercase text-slate-400 hover:text-slate-250 border border-transparent">Easy</button>
+                        <button onclick="filterProblemsDifficulty('medium')" id="diff-btn-medium" class="px-2.5 py-1 rounded text-xs font-bold uppercase text-slate-400 hover:text-slate-250 border border-transparent">Medium</button>
+                        <button onclick="filterProblemsDifficulty('hard')" id="diff-btn-hard" class="px-2.5 py-1 rounded text-xs font-bold uppercase text-slate-400 hover:text-slate-250 border border-transparent">Hard</button>
+                    </div>
+                </div>
+
+                <!-- Problem Table List -->
+                <div class="flex-grow overflow-y-auto p-4">
+                    <div class="overflow-x-auto w-full">
+                        <table class="w-full text-left text-sm border-collapse">
+                            <thead>
+                                <tr class="text-slate-500 border-b border-slate-800/80 text-xs uppercase font-bold tracking-wider">
+                                    <th class="py-2.5 px-3">Title</th>
+                                    <th class="py-2.5 px-3">Difficulty</th>
+                                    <th class="py-2.5 px-3">Tags</th>
+                                    <th class="py-2.5 px-3 text-right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="problems-tbody-list">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- VIEW 3: PAIR PROGRAMMING LOBBY -->
+        <section id="view-collab" class="view-section absolute inset-0 hidden p-6 overflow-y-auto flex-col max-w-4xl mx-auto space-y-6">
+            <div class="space-y-1 mt-4">
+                <h2 class="text-xl font-bold text-slate-100 flex items-center"><i class="fa-solid fa-laptop-code text-brand-500 mr-2.5"></i>Pair Programming Lobby</h2>
+                <p class="text-sm text-slate-400">Invite colleagues to write and compile algorithms. Editors, selections, and problem details synchronize dynamically.</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Host a new Room card -->
+                <div class="glass-card p-6 rounded-xl border border-slate-800 space-y-4">
+                    <h3 class="font-bold text-slate-200 text-sm">Host a Collaboration Room</h3>
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">Select Algorithm Problem</label>
+                            <select id="lobby-collab-problem-select" class="w-full px-3 py-2 bg-dark-300 border border-slate-850 rounded-lg text-sm text-slate-350 focus:outline-none focus:border-brand-500">
+                                <!-- Populated dynamically -->
+                            </select>
+                        </div>
+                        <button onclick="createCollaborationRoom()" class="w-full py-2 bg-brand-500 hover:bg-brand-600 text-dark-300 text-sm font-bold rounded-lg transition active:scale-95 shadow-md shadow-brand-500/10">
+                            <i class="fa-solid fa-circle-plus mr-1.5"></i>Create Collaboration Room
+                        </button>
+                    </div>
+
+                    <!-- Active hosting information -->
+                    <div id="lobby-active-room-card" class="hidden p-4 rounded-lg bg-brand-500/5 border border-brand-500/20 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-brand-400 uppercase tracking-widest">Active Invite Room</span>
+                            <span class="text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/20"><i class="fa-solid fa-circle animate-pulse text-[6px] mr-1"></i>Connected</span>
+                        </div>
+                        <div class="bg-dark-300 p-3 rounded border border-slate-850 flex items-center justify-between font-mono">
+                            <div>
+                                <div class="text-[10px] text-slate-500">Code</div>
+                                <div id="lobby-room-code-display" class="text-base font-extrabold tracking-widest text-slate-200">------</div>
+                            </div>
+                            <button onclick="copyRoomCode()" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded transition flex items-center space-x-1">
+                                <i class="fa-solid fa-copy"></i><span>Copy Code</span>
+                            </button>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="copyInviteLink()" class="flex-1 py-1.5 bg-slate-850 hover:bg-slate-800 text-slate-300 text-xs font-semibold rounded transition">
+                                <i class="fa-solid fa-link mr-1"></i>Copy Invite Link
+                            </button>
+                            <button onclick="leaveCollaborationRoom()" class="flex-1 py-1.5 bg-red-950/20 hover:bg-red-950/40 text-red-400 text-xs font-semibold rounded transition border border-red-500/10">
+                                Leave Room
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Join an existing Room card -->
+                <div class="glass-card p-6 rounded-xl border border-slate-800 space-y-4">
+                    <h3 class="font-bold text-slate-200 text-sm">Join Collaboration Session</h3>
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">Enter Room Code</label>
+                            <input id="lobby-join-code-input" type="text" placeholder="e.g. BD38X8" class="w-full px-3 py-2 bg-dark-300 border border-slate-850 rounded-lg text-sm text-center font-mono font-bold tracking-widest text-slate-200 focus:outline-none focus:border-brand-500 uppercase">
+                        </div>
+                        <button onclick="joinCollaborationRoom()" class="w-full py-2 bg-slate-855 hover:bg-slate-800 text-slate-200 text-sm font-semibold rounded-lg transition active:scale-95 border border-slate-800">
+                            <i class="fa-solid fa-right-to-bracket mr-1.5"></i>Join Live Session
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- VIEW 4: ADMIN DASHBOARD -->
+        <section id="view-admin" class="view-section absolute inset-0 hidden p-6 overflow-y-auto flex-col max-w-5xl mx-auto space-y-6">
+            <div class="flex items-center justify-between mt-4">
+                <div class="space-y-1">
+                    <h2 class="text-xl font-bold text-slate-100 flex items-center"><i class="fa-solid fa-user-shield text-brand-500 mr-2.5"></i>Admin Workspace Console</h2>
+                    <p class="text-xs text-slate-400">Configure new algorithm problems and review global compilation queue streams.</p>
+                </div>
+                <button onclick="openCreateProblemModal()" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-dark-300 text-xs font-bold rounded-xl transition active:scale-95 shadow-md shadow-brand-500/10">
+                    <i class="fa-solid fa-plus mr-1.5"></i>Create New Problem
+                </button>
+            </div>
+
+            <!-- Admin statistics cards row -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="glass-card p-4 rounded-xl border border-slate-850 text-center">
+                    <div id="admin-stat-submissions" class="text-xl font-black text-slate-200 font-mono">0</div>
+                    <div class="text-[9px] text-slate-500 font-bold uppercase mt-1">Processed Runs</div>
+                </div>
+                <div class="glass-card p-4 rounded-xl border border-slate-850 text-center">
+                    <div id="admin-stat-problems" class="text-xl font-black text-slate-200 font-mono">0</div>
+                    <div class="text-[9px] text-slate-500 font-bold uppercase mt-1">Loaded Problems</div>
+                </div>
+                <div class="glass-card p-4 rounded-xl border border-slate-850 text-center">
+                    <div class="text-xl font-black text-emerald-400 font-mono"><i class="fa-solid fa-circle text-[10px] animate-pulse mr-1"></i>Active</div>
+                    <div class="text-[9px] text-slate-500 font-bold uppercase mt-1">Queue Worker Status</div>
+                </div>
+                <div class="glass-card p-4 rounded-xl border border-slate-850 text-center">
+                    <div class="text-xl font-black text-slate-200 font-mono">Docker</div>
+                    <div class="text-[9px] text-slate-500 font-bold uppercase mt-1">Sandbox Environment</div>
+                </div>
+            </div>
+
+            <!-- Split layouts: Log logs vs form seed list -->
+            <div class="glass-card p-6 rounded-xl border border-slate-800/80 flex flex-col space-y-4">
+                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider"><i class="fa-solid fa-list-check text-brand-500 mr-2"></i>Global Execution Stream (Latest 50 Submissions)</h3>
+                
+                <div class="overflow-x-auto w-full">
+                    <table class="w-full text-left text-xs border-collapse">
+                        <thead>
+                            <tr class="text-slate-500 border-b border-slate-800/80 text-[10px] uppercase font-bold tracking-wider font-mono">
+                                <th class="py-2.5 px-3">Run ID</th>
+                                <th class="py-2.5 px-3">User ID</th>
+                                <th class="py-2.5 px-3">Problem ID</th>
+                                <th class="py-2.5 px-3">Language</th>
+                                <th class="py-2.5 px-3">Verdict</th>
+                                <th class="py-2.5 px-3 text-right">Created At</th>
+                            </tr>
+                        </thead>
+                        <tbody id="admin-submissions-tbody-log">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- VIEW 5: LEETCODE-STYLE RESIZABLE WORKSPACE -->
+        <section id="view-workspace" class="view-section absolute inset-0 hidden flex-row items-stretch select-none">
+            <!-- Left Pane: Problem Statement Statement -->
+            <div id="workspace-left-pane" class="w-[40%] min-w-[200px] shrink-0 bg-dark-200 flex flex-col border-r border-slate-800/60 overflow-hidden relative">
+                <!-- Workspace Header bar -->
+                <div class="h-10 border-b border-slate-800 bg-dark-300 flex items-center px-4 justify-between shrink-0">
+                    <button onclick="exitWorkspace()" class="text-xs font-bold text-slate-400 hover:text-brand-500 transition flex items-center">
+                        <i class="fa-solid fa-chevron-left mr-2"></i>Dashboard
+                    </button>
+                    <!-- Collab syncing status badge -->
+                    <span id="ws-collab-active-indicator" class="hidden text-[9px] bg-brand-500/10 text-brand-400 border border-brand-500/20 px-2 py-0.5 rounded-full font-semibold">
+                        <i class="fa-solid fa-users mr-1"></i>Collaborating
+                    </span>
+                </div>
+                
+                <!-- Left Pane Navigation Tabs -->
+                <div class="h-9 border-b border-slate-800 bg-dark-200/90 flex items-center px-6 shrink-0 select-none">
+                    <div class="flex space-x-1">
+                        <button id="wleft-tab-description" onclick="switchLeftTab('description')" class="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 border-brand-500 text-brand-500 transition">
+                            <i class="fa-solid fa-file-lines mr-1.5"></i>Description
+                        </button>
+                        <button id="wleft-tab-history" onclick="switchLeftTab('history')" class="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition">
+                            <i class="fa-solid fa-clock-rotate-left mr-1.5"></i>Submissions
+                        </button>
+                        <button id="wleft-tab-explain" onclick="switchLeftTab('explain')" class="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition">
+                            <i class="fa-solid fa-wand-magic-sparkles mr-1.5 text-brand-400"></i>Explain
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Left Pane Content Area -->
+                <div class="flex-grow overflow-y-auto p-5 relative select-text">
+                    <!-- Description Body (LaTeX and KaTeX) -->
+                    <div id="wleft-content-description" class="space-y-4">
+                        <div id="workspace-description-container">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+                    
+                    <!-- Submissions history logs list -->
+                    <div id="wleft-content-history" class="hidden space-y-3">
+                        <h4 class="text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">My Submission History</h4>
+                        <div id="whistory-list" class="space-y-2">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- AI Question Explain area -->
+                    <div id="wleft-content-explain" class="hidden space-y-3"></div>
+                </div>
+            </div>
+
+            <!-- Vertical Draggable Divider -->
+            <div id="vertical-divider" class="resize-handle-v select-none shrink-0 z-30 flex items-center justify-center">
+                <!-- Small grip dots -->
+                <div class="h-8 w-1 bg-slate-850/60 rounded"></div>
+            </div>
+
+            <!-- Right Pane: Monaco Editor & Console drawer -->
+            <div id="workspace-right-pane" class="flex-grow min-w-[200px] flex flex-col items-stretch overflow-hidden relative bg-dark-300">
+                
+                <!-- Editor Space -->
+                <div id="workspace-editor-pane" class="h-[60%] min-h-[100px] flex flex-col items-stretch border-b border-slate-800/60 relative">
+                    <!-- Editor Header / Controls -->
+                    <div class="h-10 border-b border-slate-800/80 bg-dark-200 flex items-center justify-between px-6 shrink-0 select-none">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-[10px] font-bold text-brand-400 bg-slate-800 px-2.5 py-1 rounded border border-slate-700/80 flex items-center">
+                                <i class="fa-brands fa-python text-brand-500 mr-1.5 text-xs"></i>Python 3
+                            </span>
+                            <span id="workspace-problem-label" class="text-xs font-bold text-slate-400"></span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <button onclick="resetStarterCode()" class="p-1.5 rounded bg-slate-800/80 hover:bg-slate-750 text-slate-400 hover:text-slate-200 transition" title="Reset starter code">
+                                <i class="fa-solid fa-rotate-left text-xs"></i>
+                            </button>
+                            <button onclick="runCode()" class="px-3.5 py-1 text-xs font-semibold rounded bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 transition active:scale-95">
+                                <i class="fa-solid fa-play mr-1.5"></i>Run
+                            </button>
+                            <button onclick="submitCode()" class="px-4 py-1 text-xs font-bold rounded bg-brand-500 hover:bg-brand-600 text-dark-300 shadow-md shadow-brand-500/10 transition active:scale-95">
+                                <i class="fa-solid fa-cloud-arrow-up mr-1.5"></i>Submit
+                            </button>
+                        </div>
+                    </div>
+                    <!-- Editor Container -->
+                    <div class="flex-grow relative bg-dark-300">
+                        <div id="monaco-editor-workspace" class="absolute inset-0"></div>
+                    </div>
+                </div>
+
+                <!-- Horizontal Draggable Divider -->
+                <div id="horizontal-divider" class="resize-handle-h select-none shrink-0 z-30 flex flex-col items-center justify-center">
+                    <!-- Small grip line -->
+                    <div class="w-8 h-1 bg-slate-850/60 rounded"></div>
+                </div>
+
+                <!-- Console Results Drawer Space -->
+                <div id="workspace-console-pane" class="flex-grow min-h-[100px] flex flex-col bg-dark-200">
+                    <!-- Console navigation tabs -->
+                    <div class="h-9 border-b border-slate-800 bg-dark-200/90 flex items-center px-6 shrink-0 select-none">
+                        <div class="flex space-x-1">
+                            <button id="wconsole-tab-result" onclick="switchConsoleTab('result')" class="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 border-brand-500 text-brand-500 transition">
+                                Verdict Output
+                            </button>
+
+                            <button id="wconsole-tab-ai" onclick="switchConsoleTab('ai')" class="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition">
+                                <i class="fa-solid fa-wand-magic-sparkles text-brand-400 mr-1"></i>AI Mentor
+                            </button>
+                            <button id="wconsole-tab-discussions" onclick="switchConsoleTab('discussions')" class="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition">
+                                Discussions
+                            </button>
+                        </div>
+                    </div>
+                    <!-- Console body contents (scrollable separately) -->
+                    <div class="flex-grow overflow-y-auto p-5 relative select-text">
+                        <!-- Result output contents -->
+                        <div id="wconsole-content-result" class="h-full flex flex-col">
+                            <div id="wconsole-default-msg" class="flex-grow flex flex-col items-center justify-center text-slate-500 py-6">
+                                <i class="fa-solid fa-terminal text-xl text-slate-800 mb-2"></i>
+                                <span class="text-xs">Submit or Run code to view stdout compilation outputs.</span>
+                            </div>
+                            
+                            <div id="wjudge-status-block" class="hidden space-y-4">
+                                <div class="flex items-center justify-between glass-card p-4 rounded-xl border-slate-800">
+                                    <div class="flex items-center space-x-3">
+                                        <div id="wverdict-icon" class="h-9 w-9 rounded-lg flex items-center justify-center text-base"></div>
+                                        <div>
+                                            <div id="wverdict-label" class="font-bold text-xs uppercase tracking-wide"></div>
+                                            <div class="text-[9px] text-slate-500">Run ID: <span id="wverdict-id" class="font-mono text-slate-500"></span></div>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center space-x-4 text-xs font-mono">
+                                        <div class="text-right">
+                                            <div class="text-[9px] text-slate-500">Time</div>
+                                            <div id="wverdict-runtime" class="font-semibold text-slate-200">--</div>
+                                        </div>
+                                        <div class="text-right border-l border-slate-800 pl-4">
+                                            <div class="text-[9px] text-slate-500">Memory</div>
+                                            <div id="wverdict-memory" class="font-semibold text-slate-200">--</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div id="wjudge-error-block" class="hidden glass-card p-4 rounded-xl bg-red-950/10 border-red-500/15">
+                                    <div class="text-[9px] font-bold text-red-400 mb-1 uppercase tracking-wider font-mono">Error trace</div>
+                                    <pre id="wjudge-error-text" class="text-xs font-mono text-red-300 whitespace-pre-wrap overflow-x-auto bg-black/30 p-3 rounded border border-red-500/10"></pre>
+                                </div>
+
+                                <!-- LeetCode-style test cases container -->
+                                <div id="wconsole-testcases-container" class="space-y-4 pt-2"></div>
+                            </div>
+                        </div>
+
+
+
+                        <!-- AI Panel assistant RAG -->
+                        <div id="wconsole-content-ai" class="hidden h-full flex flex-col space-y-4">
+                            <div class="flex items-center justify-between glass-card p-2.5 rounded-xl border-slate-800 shrink-0">
+                                <span class="text-[9px] text-slate-400 font-bold uppercase tracking-wider"><i class="fa-solid fa-microchip mr-1.5 text-brand-500"></i>AI Helpers:</span>
+                                <div class="flex space-x-1.5">
+                                    <button onclick="triggerAIAction('complexity')" class="px-2.5 py-1 bg-slate-850 hover:bg-slate-800 text-slate-300 text-[9px] font-bold uppercase tracking-wider rounded transition border border-slate-800">
+                                        Analyze Complexity
+                                    </button>
+                                    <button id="wbtn-ai-review" onclick="triggerAIAction('review')" class="px-2.5 py-1 bg-slate-850 hover:bg-slate-800 text-slate-350 text-[9px] font-bold uppercase tracking-wider rounded transition border border-slate-800" disabled>
+                                        Code Review
+                                    </button>
+                                    <button id="wbtn-ai-hints" onclick="triggerAIAction('hints')" class="px-2.5 py-1 bg-slate-850 hover:bg-slate-800 text-slate-355 text-[9px] font-bold uppercase tracking-wider rounded transition border border-slate-800" disabled>
+                                        Get Hints
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="flex-grow flex flex-col space-y-3 min-h-[100px]">
+                                <div id="wai-response-box" class="flex-grow overflow-y-auto glass-card p-4 rounded-xl text-xs leading-relaxed border border-slate-850 bg-slate-900/10 min-h-[100px]">
+                                    <div class="text-slate-550 flex flex-col items-center justify-center h-full">
+                                        <i class="fa-solid fa-wand-magic-sparkles text-xl text-slate-800 mb-2"></i>
+                                        <span>Click a helper action or ask complexity optimization details below.</span>
+                                    </div>
+                                </div>
+                                <div class="flex items-center space-x-2 shrink-0">
+                                    <input id="wai-chat-input" type="text" placeholder="Ask AI a question about this code..." class="flex-grow px-3.5 py-2 text-xs bg-dark-300 border border-slate-800 rounded-xl focus:outline-none focus:border-brand-500 text-slate-200 transition">
+                                    <button onclick="triggerAIAction('ask')" class="p-2 py-2 px-3 rounded-xl bg-brand-600 hover:bg-brand-700 text-white transition active:scale-95">
+                                        <i class="fa-solid fa-paper-plane text-xs"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Discussions tab -->
+                        <div id="wconsole-content-discussions" class="hidden h-full flex flex-col space-y-3">
+                            <div class="flex space-x-2 shrink-0">
+                                <input id="wcomment-input" type="text" placeholder="Post a public question/comment on this problem..." class="flex-grow px-3.5 py-2 text-xs bg-dark-300 border border-slate-850 rounded-xl focus:outline-none focus:border-brand-500 text-slate-200 transition">
+                                <button onclick="postComment()" class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold transition active:scale-95">
+                                    Comment
+                                </button>
+                            </div>
+                            <div id="wdiscussions-container" class="flex-grow overflow-y-auto space-y-3"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Modal: Auth Login/Signup -->
+    <div id="auth-modal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+        <div class="glass-card w-full max-w-sm p-8 rounded-2xl shadow-2xl relative border border-slate-850 mx-4 transform scale-95 transition-transform duration-300 select-text">
+            <button onclick="hideAuthModal()" class="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition">
+                <i class="fa-solid fa-xmark text-base"></i>
+            </button>
+            
+            <div class="text-center mb-6">
+                <div class="h-9 w-9 bg-gradient-to-tr from-brand-600 to-emerald-400 rounded-lg flex items-center justify-center mx-auto mb-3 shadow-lg shadow-brand-500/10">
+                    <i class="fa-solid fa-code text-white text-sm"></i>
+                </div>
+                <h3 class="text-lg font-bold text-slate-100 logo-font">SUBMITTERY</h3>
+                <p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold mt-1">Distributed AI Judge Portal</p>
+            </div>
+            
+            <div class="flex border-b border-slate-800 mb-5 text-xs font-bold uppercase tracking-wider">
+                <button id="auth-tab-login" onclick="switchAuthTab('login')" class="flex-1 pb-2 border-b-2 border-brand-500 text-brand-500">Login</button>
+                <button id="auth-tab-signup" onclick="switchAuthTab('signup')" class="flex-1 pb-2 border-b-2 border-transparent text-slate-500 hover:text-slate-300">Signup</button>
+            </div>
+
+            <!-- Login form -->
+            <form id="form-login" onsubmit="handleLoginSubmit(event)" class="space-y-4 text-xs">
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">Email or Username</label>
+                    <input id="login-id" type="text" required class="w-full px-3 py-2 rounded-lg bg-dark-300 border border-slate-800 focus:outline-none focus:border-brand-500 text-slate-250 transition">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">Password</label>
+                    <input id="login-password" type="password" required class="w-full px-3 py-2 rounded-lg bg-dark-300 border border-slate-800 focus:outline-none focus:border-brand-500 text-slate-250 transition">
+                </div>
+                <button type="submit" class="w-full py-2.5 bg-brand-500 hover:bg-brand-600 text-dark-300 font-bold rounded-lg transition active:scale-[0.98] shadow-md shadow-brand-500/10">
+                    Sign In
+                </button>
+            </form>
+
+            <!-- Signup form -->
+            <form id="form-signup" onsubmit="handleSignupSubmit(event)" class="space-y-4 text-xs hidden">
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">Username</label>
+                    <input id="signup-username" type="text" required class="w-full px-3 py-2 rounded-lg bg-dark-300 border border-slate-800 focus:outline-none focus:border-brand-500 text-slate-250 transition">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">Email Address</label>
+                    <input id="signup-email" type="email" required class="w-full px-3 py-2 rounded-lg bg-dark-300 border border-slate-800 focus:outline-none focus:border-brand-500 text-slate-250 transition">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">Password</label>
+                    <input id="signup-password" type="password" required class="w-full px-3 py-2 rounded-lg bg-dark-300 border border-slate-800 focus:outline-none focus:border-brand-500 text-slate-250 transition">
+                </div>
+                <button type="submit" class="w-full py-2.5 bg-brand-500 hover:bg-brand-600 text-dark-300 font-bold rounded-lg transition active:scale-[0.98] shadow-md shadow-brand-500/10">
+                    Create Account
+                </button>
+            </form>
+
+            <!-- OAuth dividers -->
+            <div class="relative flex py-4 items-center font-mono">
+                <div class="flex-grow border-t border-slate-800/80"></div>
+                <span class="flex-shrink mx-4 text-[9px] font-bold text-slate-500 uppercase tracking-widest">OAuth</span>
+                <div class="flex-grow border-t border-slate-800/80"></div>
+            </div>
+            
+            <button onclick="handleGoogleOAuth()" type="button" class="w-full py-2 bg-slate-800 hover:bg-slate-750 text-slate-250 font-bold rounded-lg border border-slate-700/80 transition flex items-center justify-center space-x-2 active:scale-[0.98] text-xs">
+                <i class="fa-brands fa-google text-slate-400"></i>
+                <span>Sign in with Google OAuth</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal: Admin Create Problem -->
+    <div id="create-problem-modal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-350 select-text">
+        <div class="glass-card w-full max-w-xl p-8 rounded-2xl shadow-2xl relative border border-slate-850 mx-4 transform scale-95 transition-transform duration-350 max-h-[85vh] overflow-y-auto">
+            <button onclick="hideCreateProblemModal()" class="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition">
+                <i class="fa-solid fa-xmark text-base"></i>
+            </button>
+            
+            <h3 class="text-sm font-bold text-slate-100 mb-4"><i class="fa-solid fa-circle-plus text-brand-500 mr-2"></i>Create New Coding Problem</h3>
+            
+            <form onsubmit="handleCreateProblemSubmit(event)" class="space-y-4 text-xs">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block font-semibold text-slate-400 mb-1">Title</label>
+                        <input id="prob-title" type="text" required class="w-full px-3 py-2 bg-dark-300 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-brand-500">
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-slate-400 mb-1">Difficulty</label>
+                        <select id="prob-difficulty" class="w-full px-3 py-2 bg-dark-300 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-brand-500">
+                            <option value="easy">Easy</option>
+                            <option value="medium">Medium</option>
+                            <option value="hard">Hard</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block font-semibold text-slate-400 mb-1">Description (Markdown & LaTeX)</label>
+                    <textarea id="prob-description" rows="5" required placeholder="Describe problem. Supports LaTeX formulas: $2 \le \text{nums.length} \le 10^4$" class="w-full px-3 py-2 bg-dark-300 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-brand-500 font-mono"></textarea>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block font-semibold text-slate-400 mb-1">Time Limit (seconds)</label>
+                        <input id="prob-timelimit" type="number" step="0.1" value="1.0" required class="w-full px-3 py-2 bg-dark-300 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-brand-500">
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-slate-400 mb-1">Memory Limit (MB)</label>
+                        <input id="prob-memlimit" type="number" value="256" required class="w-full px-3 py-2 bg-dark-300 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-brand-500">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block font-semibold text-slate-400 mb-1">Tags (comma-separated)</label>
+                        <input id="prob-tags" type="text" placeholder="array, math, stack" class="w-full px-3 py-2 bg-dark-300 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-brand-500">
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-slate-400 mb-1">Starter Template Code (Python)</label>
+                        <textarea id="prob-starter" rows="3" class="w-full px-3 py-2 bg-dark-300 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-brand-500 font-mono">def solve():
+    # Read inputs
+    pass
+</textarea>
+                    </div>
+                </div>
+
+                <!-- Test Cases Section -->
+                <div class="border-t border-slate-800 pt-4 space-y-3">
+                    <div class="flex items-center justify-between">
+                        <h4 class="font-bold text-slate-350 uppercase tracking-wider text-[9px]">Test Cases</h4>
+                        <button type="button" onclick="addTestCaseRow()" class="px-2.5 py-1 bg-slate-850 hover:bg-slate-800 text-slate-300 rounded font-semibold transition border border-slate-800"><i class="fa-solid fa-plus mr-1"></i>Add Case</button>
+                    </div>
+                    <div id="testcase-rows-container" class="space-y-3 max-h-[160px] overflow-y-auto pr-1">
+                        <!-- Default test case row -->
+                        <div class="testcase-row glass-card p-3 rounded-lg border border-slate-800/80 grid grid-cols-12 gap-2 items-center">
+                            <div class="col-span-5">
+                                <textarea placeholder="Input..." required class="tc-input w-full px-2 py-1 bg-dark-300 border border-slate-800 rounded text-slate-200 font-mono text-[10px]" rows="1"></textarea>
+                            </div>
+                            <div class="col-span-5">
+                                <textarea placeholder="Expected Output..." required class="tc-output w-full px-2 py-1 bg-dark-300 border border-slate-800 rounded text-slate-200 font-mono text-[10px]" rows="1"></textarea>
+                            </div>
+                            <div class="col-span-2 text-center flex flex-col items-center">
+                                <span class="text-[9px] text-slate-500 font-bold mb-0.5">Sample</span>
+                                <input type="checkbox" class="tc-sample h-4 w-4 text-brand-500 bg-dark-300 rounded border-slate-800 focus:ring-brand-500">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" class="w-full py-2.5 bg-brand-500 hover:bg-brand-600 text-dark-300 font-bold rounded-lg transition shadow-md shadow-brand-500/10 active:scale-[0.98]">
+                    Save and Seed Problem
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Profile Settings -->
+    <div id="profile-settings-modal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-350 select-text">
+        <div class="glass-card w-full max-w-md p-8 rounded-2xl shadow-2xl relative border border-slate-850 mx-4 transform scale-95 transition-transform duration-350 max-h-[85vh] overflow-y-auto">
+            <button onclick="hideSettingsModal()" class="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition">
+                <i class="fa-solid fa-xmark text-base"></i>
+            </button>
+            
+            <div class="text-center pb-4">
+                <h3 class="text-base font-bold text-slate-100"><i class="fa-solid fa-gear text-brand-500 mr-2"></i>Account Profile Settings</h3>
+                <p class="text-[11px] text-slate-500 mt-1">Configure your personal coder credentials</p>
+            </div>
+            
+            <form id="form-profile-settings" onsubmit="handleProfileSettingsSubmit(event)" class="space-y-4 text-xs">
+                <div>
+                    <label class="block font-semibold text-slate-400 mb-1">Username</label>
+                    <input id="settings-username" type="text" required class="w-full px-3 py-2 bg-dark-300 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-brand-500">
+                </div>
+                <div>
+                    <label class="block font-semibold text-slate-400 mb-1">Email Address</label>
+                    <input id="settings-email" type="email" required class="w-full px-3 py-2 bg-dark-300 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-brand-500">
+                </div>
+                <div>
+                    <label class="block font-semibold text-slate-400 mb-1">Avatar Seed (Dicebear)</label>
+                    <div class="flex gap-2">
+                        <input id="settings-avatar-seed" type="text" placeholder="e.g. yourname" class="flex-grow px-3 py-2 bg-dark-300 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-brand-500" oninput="previewSettingsAvatar()">
+                        <div id="settings-avatar-preview-container" class="h-9 w-9 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 overflow-hidden">
+                            <i class="fa-solid fa-circle-user text-2xl text-slate-600"></i>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <label class="block font-semibold text-slate-400 mb-1">New Password (leave blank to keep unchanged)</label>
+                    <input id="settings-password" type="password" placeholder="••••••••" class="w-full px-3 py-2 bg-dark-300 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-brand-500">
+                </div>
+                
+                <button type="submit" class="w-full py-2.5 bg-brand-500 hover:bg-brand-600 text-dark-300 font-bold rounded-lg transition active:scale-[0.98] shadow-md shadow-brand-500/10">
+                    Save Profile Changes
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Monaco Loader -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.46.0/min/vs/loader.min.js"></script>
+    <!-- Frontend Logic -->
+    <script src="app.js"></script>
+</body>
+</html>

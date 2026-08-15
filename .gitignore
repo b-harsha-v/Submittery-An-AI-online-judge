@@ -1,0 +1,35 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Database files & logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+.system_generated/
+tasks/
+
+# Antigravity agents custom directories
+.gemini/
+brain/
+.agents/
+
+# IDE configurations
+.vscode/
+.idea/
+*.suo
+*.sln
+*.swp

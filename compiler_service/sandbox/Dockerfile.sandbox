@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+# Create a sandbox directory
+WORKDIR /app
+
+# Copy the runner script
+COPY runner.py /app/runner.py
+
+# Set permissions
+RUN chmod +x /app/runner.py
+
+# Switch to a non-privileged system user for sandboxing execution
+USER nobody
+
+# Default execution command
+ENTRYPOINT ["python", "/app/runner.py"]
