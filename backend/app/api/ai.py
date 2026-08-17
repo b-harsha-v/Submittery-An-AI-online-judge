@@ -6,11 +6,14 @@ from typing import List, Optional
 from ..database import get_db
 from ..models.problem import Problem
 from ..models.submission import Submission
-from ..models.user import User
+from ..models.user import User, UserRole
 from ..services.ai_service import ai_service
 from .deps import get_current_user
 
+from ..core.rate_limiter import RateLimiter
+
 router = APIRouter(prefix="/ai", tags=["ai"])
+rate_limit_ai = RateLimiter(requests_limit=15, window_seconds=60, scope="ai_service")
 
 class ComplexityRequest(BaseModel):
     code: str
@@ -33,7 +36,7 @@ class ProblemRecommendResponse(BaseModel):
     class Config:
         from_attributes = True
 
-@router.post("/analyze-complexity", response_model=AIResponse)
+@router.post("/analyze-complexity", response_model=AIResponse, dependencies=[Depends(rate_limit_ai)])
 def analyze_complexity(
     req: ComplexityRequest,
     db: Session = Depends(get_db),
@@ -49,7 +52,7 @@ def analyze_complexity(
     analysis = ai_service.analyze_complexity(req.code, problem.title)
     return {"response": analysis}
 
-@router.post("/code-review/{submission_id}", response_model=AIResponse)
+@router.post("/code-review/{submission_id}", response_model=AIResponse, dependencies=[Depends(rate_limit_ai)])
 def code_review(
     submission_id: UUID,
     db: Session = Depends(get_db),
@@ -63,7 +66,7 @@ def code_review(
         )
         
     # Check authorization
-    if submission.user_id != current_user.id and current_user.role != "admin":
+    if submission.user_id != current_user.id and current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this submission"
@@ -73,7 +76,7 @@ def code_review(
     review = ai_service.provide_code_review(submission.code, problem.title, submission.status.value)
     return {"response": review}
 
-@router.post("/debug-hints/{submission_id}", response_model=AIResponse)
+@router.post("/debug-hints/{submission_id}", response_model=AIResponse, dependencies=[Depends(rate_limit_ai)])
 def debug_hints(
     submission_id: UUID,
     db: Session = Depends(get_db),
@@ -87,7 +90,7 @@ def debug_hints(
         )
         
     # Check authorization
-    if submission.user_id != current_user.id and current_user.role != "admin":
+    if submission.user_id != current_user.id and current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this submission"
@@ -98,7 +101,7 @@ def debug_hints(
     hints = ai_service.generate_debug_hints(submission.code, problem.title, error_msg)
     return {"response": hints}
 
-@router.post("/ask", response_model=AIResponse)
+@router.post("/ask", response_model=AIResponse, dependencies=[Depends(rate_limit_ai)])
 def ask_question(
     req: QARequest,
     db: Session = Depends(get_db),

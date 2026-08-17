@@ -19,6 +19,7 @@ let activeConsoleTab = "result";
 
 // Filter state
 let filterDifficulty = "all";
+let googleClientId = null;
 
 // Initialize App
 document.addEventListener("DOMContentLoaded", () => {
@@ -31,6 +32,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     
     initMonaco();
+    initGoogleAuth();
     checkAuth();
     loadProblems();
     initDraggableDividers();
@@ -51,12 +53,39 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     
     // Setup AI chat input listener for Enter key
-    document.getElementById("wai-chat-input").addEventListener("keypress", (e) => {
-        if (e.key === "Enter") {
-            triggerAIAction("ask");
-        }
-    });
+    const aiInput = document.getElementById("wai-chat-input");
+    if (aiInput) {
+        aiInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                triggerAIAction("ask");
+            }
+        });
+    }
+    
+    // Setup Collab chat input listener for Enter key
+    const chatInput = document.getElementById("collab-chat-input");
+    if (chatInput) {
+        chatInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendCollabChatMessage();
+            }
+        });
+    }
 });
+
+async function initGoogleAuth() {
+    try {
+        const config = await request("/auth/config");
+        if (config && config.google_client_id) {
+            googleClientId = config.google_client_id;
+            console.log("[*] Google OAuth configured with Client ID:", googleClientId.substring(0, 15) + "...");
+        }
+    } catch (e) {
+        console.log("[*] Auth config note:", e);
+    }
+}
 
 // View Navigation Router
 function navigateTo(viewName) {
@@ -106,7 +135,7 @@ function navigateTo(viewName) {
     }
     // Refresh admin data if navigating to admin
     if (viewName === "admin" && currentUser?.role === "admin") {
-        loadAdminSubmissions();
+        loadAdminData();
     }
     
     // Trigger Monaco Editor layout update if returning to workspace
@@ -195,6 +224,14 @@ function initDraggableDividers() {
 }
 
 // Monaco Editor Initialization
+let peerCursorDecorations = {};
+let activeRoomPeers = new Set();
+let isReceivingRemoteSync = false;
+let hostedProblemSlug = null;
+let currentTestcaseMode = "samples";
+let collabChatUnreadCount = 0;
+let collabMessages = [];
+
 function initMonaco() {
     require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.46.0/min/vs' } });
     require(['vs/editor/editor.main'], function () {
@@ -213,7 +250,7 @@ function initMonaco() {
         // Broadcast code modifications to peers in collab mode
         window.editor.onDidChangeModelContent((event) => {
             if (isCollaborating && wsCollab && wsCollab.readyState === WebSocket.OPEN) {
-                if (!event.isFlush) {
+                if (!isReceivingRemoteSync) {
                     const code = window.editor.getValue();
                     wsCollab.send(JSON.stringify({
                         type: "sync-code",
@@ -222,7 +259,90 @@ function initMonaco() {
                 }
             }
         });
+
+        // Broadcast cursor position telemetry to peers in collab mode
+        window.editor.onDidChangeCursorPosition((event) => {
+            if (isCollaborating && wsCollab && wsCollab.readyState === WebSocket.OPEN) {
+                wsCollab.send(JSON.stringify({
+                    type: "sync-cursor",
+                    user: currentUser?.username || "Peer",
+                    position: {
+                        lineNumber: event.position.lineNumber,
+                        column: event.position.column
+                    }
+                }));
+            }
+        });
+
+        // Broadcast selection telemetry to peers in collab mode
+        window.editor.onDidChangeCursorSelection((event) => {
+            if (isCollaborating && wsCollab && wsCollab.readyState === WebSocket.OPEN) {
+                if (!event.selection.isEmpty()) {
+                    wsCollab.send(JSON.stringify({
+                        type: "sync-selection",
+                        user: currentUser?.username || "Peer",
+                        selection: {
+                            startLineNumber: event.selection.startLineNumber,
+                            startColumn: event.selection.startColumn,
+                            endLineNumber: event.selection.endLineNumber,
+                            endColumn: event.selection.endColumn
+                        }
+                    }));
+                }
+            }
+        });
     });
+}
+
+function renderPeerCursor(user, position) {
+    if (!window.editor || !position) return;
+    const oldDecs = peerCursorDecorations[user] || [];
+    const newDecs = window.editor.deltaDecorations(oldDecs, [
+        {
+            range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column + 1),
+            options: {
+                className: 'remote-peer-cursor',
+                hoverMessage: { value: `**${user}** is editing here` }
+            }
+        }
+    ]);
+    peerCursorDecorations[user] = newDecs;
+    registerActivePeer(user);
+}
+
+function renderPeerSelection(user, selection) {
+    if (!window.editor || !selection) return;
+    const oldDecs = peerCursorDecorations[`${user}_sel`] || [];
+    const newDecs = window.editor.deltaDecorations(oldDecs, [
+        {
+            range: new monaco.Range(selection.startLineNumber, selection.startColumn, selection.endLineNumber, selection.endColumn),
+            options: {
+                className: 'remote-peer-selection',
+                hoverMessage: { value: `Selection by **${user}**` }
+            }
+        }
+    ]);
+    peerCursorDecorations[`${user}_sel`] = newDecs;
+    registerActivePeer(user);
+}
+
+function registerActivePeer(user) {
+    if (!user || user === currentUser?.username) return;
+    activeRoomPeers.add(user);
+    updatePeerBadge();
+}
+
+function updatePeerBadge() {
+    const badge = document.getElementById("ws-peer-presence-badge");
+    const text = document.getElementById("ws-peer-count-text");
+    if (!badge || !text) return;
+    const count = activeRoomPeers.size;
+    if (count > 0 && isCollaborating) {
+        badge.classList.remove("hidden");
+        text.innerText = `${count} Peer${count > 1 ? 's' : ''}`;
+    } else {
+        badge.classList.add("hidden");
+    }
 }
 
 // Math equations formatting
@@ -299,7 +419,7 @@ async function checkAuth() {
         
         if (currentUser.role === "admin") {
             document.getElementById("nav-admin").classList.remove("hidden");
-            loadAdminSubmissions();
+            loadAdminData();
         } else {
             document.getElementById("nav-admin").classList.add("hidden");
         }
@@ -453,9 +573,62 @@ async function handleSignupSubmit(e) {
 }
 
 async function handleGoogleOAuth() {
+    // If real Google Client ID is configured and Google SDK is loaded
+    if (googleClientId && window.google && window.google.accounts && window.google.accounts.oauth2) {
+        try {
+            const tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: googleClientId,
+                scope: 'email profile openid',
+                prompt: 'select_account',
+                callback: async (tokenResponse) => {
+                    if (tokenResponse && tokenResponse.access_token) {
+                        try {
+                            const userInfoResp = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                                headers: { Authorization: `Bearer ${tokenResponse.access_token}` }
+                            });
+                            const userInfo = await userInfoResp.json();
+                            if (!userInfo.email) {
+                                alert("Failed to retrieve Google email address.");
+                                return;
+                            }
+                            
+                            const realToken = `mock_${userInfo.email}::${encodeURIComponent(userInfo.name || userInfo.email.split('@')[0])}::${encodeURIComponent(userInfo.picture || '')}`;
+                            const data = await request("/auth/google", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ id_token: realToken })
+                            });
+                            
+                            currentToken = data.access_token;
+                            localStorage.setItem("token", currentToken);
+                            currentUser = data.user;
+                            updateUIForAuth();
+                            hideAuthModal();
+                            if (currentUser.role === "admin") {
+                                document.getElementById("nav-admin").classList.remove("hidden");
+                                loadAdminSubmissions();
+                            } else {
+                                document.getElementById("nav-admin").classList.add("hidden");
+                            }
+                            loadProblems();
+                            calculateUserStats();
+                        } catch (err) {
+                            alert("Google OAuth Login Error: " + err.message);
+                        }
+                    }
+                }
+            });
+            tokenClient.requestAccessToken();
+            return;
+        } catch (e) {
+            console.log("[*] Real Google OAuth error, falling back to dev mode:", e);
+        }
+    }
+    
+    // Developer fallback if no Google Client ID configured
     const rand = Math.floor(Math.random() * 10000);
     const mockEmail = `dev_oauth_${rand}@submittery.com`;
-    const mockToken = `mock_${mockEmail}_OAuthDev_${encodeURIComponent("https://api.dicebear.com/7.x/bottts/svg?seed=" + rand)}`;
+    const mockToken = `mock_${mockEmail}::OAuthDev_${rand}::https://api.dicebear.com/7.x/bottts/svg?seed=${rand}`;
     
     try {
         const data = await request("/auth/google", {
@@ -501,28 +674,27 @@ async function loadProblems() {
     try {
         problems = await request("/problems/");
         renderProblemsTable();
+        renderAdminProblemsTable();
         populateLobbySelect();
+        const statEl = document.getElementById("home-stat-starter-problems");
+        if (statEl) statEl.innerText = problems.length;
+        const adminStatProblems = document.getElementById("admin-stat-problems");
+        if (adminStatProblems) adminStatProblems.innerText = problems.length;
+        
+        // Restore persistent collab session if active in localStorage
+        restoreCollabSession();
     } catch (e) {
         console.error("Failed to load problems:", e);
     }
 }
 
-// User Dashboard Statistics compiler
+// User Dashboard Statistics compiler (Single Batch Request O(1))
 async function calculateUserStats() {
     if (!currentToken || problems.length === 0) return;
     
     try {
-        // Query recent runs across all problems to compile stats
-        const submissionsLog = [];
-        // Fetch runs for each problem to synthesize user dashboard
-        for (let prob of problems) {
-            try {
-                const subList = await request(`/submissions/problem/${prob.id}`);
-                submissionsLog.push(...subList);
-            } catch (err) {}
-        }
-        
-        userSubmissions = submissionsLog.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        const submissionsLog = await request("/submissions/me");
+        userSubmissions = (submissionsLog || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
         renderUserDashboardSubmissions();
         
         // Calculate solved count stats
@@ -549,11 +721,16 @@ async function calculateUserStats() {
         const totalProblems = problems.length;
         const percentage = totalProblems > 0 ? (totalSolved / totalProblems) * 100 : 0;
         
-        document.getElementById("solved-stats-count").innerText = `${totalSolved} / ${totalProblems}`;
-        document.getElementById("solved-stats-progressbar").style.width = `${percentage}%`;
-        document.getElementById("stats-easy-count").innerText = easySolved;
-        document.getElementById("stats-medium-count").innerText = mediumSolved;
-        document.getElementById("stats-hard-count").innerText = hardSolved;
+        const countEl = document.getElementById("solved-stats-count");
+        if (countEl) countEl.innerText = `${totalSolved} / ${totalProblems}`;
+        const barEl = document.getElementById("solved-stats-progressbar");
+        if (barEl) barEl.style.width = `${percentage}%`;
+        const easyEl = document.getElementById("stats-easy-count");
+        if (easyEl) easyEl.innerText = easySolved;
+        const medEl = document.getElementById("stats-medium-count");
+        if (medEl) medEl.innerText = mediumSolved;
+        const hardEl = document.getElementById("stats-hard-count");
+        if (hardEl) hardEl.innerText = hardSolved;
         
     } catch (e) {
         console.error("Failed to compute stats:", e);
@@ -617,23 +794,23 @@ function filterProblemsList() {
 }
 
 const neetcodeTopicTagMap = {
-    "arrays-hashing": ["array", "hash-table"],
+    "arrays-hashing": ["array", "hash-table", "prefix-sum"],
     "two-pointers": ["two-pointers"],
     "sliding-window": ["sliding-window"],
     "stack": ["stack"],
     "binary-search": ["binary-search"],
     "linked-list": ["linked-list"],
-    "trees": ["trees", "tree"],
+    "trees": ["trees", "tree", "bfs-dfs"],
     "tries": ["trie", "tries"],
     "heap-priority-queue": ["heap", "priority-queue"],
     "backtracking": ["backtracking"],
-    "graphs": ["graph", "graphs"],
+    "graphs": ["graph", "graphs", "bfs-dfs", "matrix"],
     "advanced-graphs": ["advanced-graph", "advanced-graphs"],
     "1d-dp": ["dynamic-programming", "1d-dp"],
-    "2d-dp": ["2d-dp"],
+    "2d-dp": ["dynamic-programming", "2d-dp"],
     "greedy": ["greedy"],
     "intervals": ["intervals", "interval"],
-    "math-geometry": ["math", "geometry"],
+    "math-geometry": ["math", "geometry", "matrix"],
     "bit-manipulation": ["bit-manipulation"]
 };
 
@@ -697,7 +874,7 @@ function renderProblemsTable() {
 
 // --- LEETCODE-STYLE RESIZABLE WORKSPACE CONTROLS ---
 
-async function openWorkspace(slug) {
+async function openWorkspace(slug, initialCode = null) {
     try {
         currentProblem = await request(`/problems/${slug}`);
         
@@ -711,14 +888,37 @@ async function openWorkspace(slug) {
         // Render Details
         renderWorkspaceProblemDetails(pIndex);
         
-        // Set starter template code
+        // Set starter template code with remote sync protection
         if (editorLoaded && window.editor) {
-            window.editor.setValue(currentProblem.starter_code?.python || "");
+            isReceivingRemoteSync = true;
+            if (initialCode !== null) {
+                window.editor.setValue(initialCode);
+            } else if (!isCollaborating) {
+                window.editor.setValue(currentProblem.starter_code?.python || "");
+            } else if (!window.editor.getValue() || window.editor.getValue().includes("Select a problem")) {
+                window.editor.setValue(currentProblem.starter_code?.python || "");
+            }
+            setTimeout(() => { isReceivingRemoteSync = false; }, 150);
         }
         
         resetConsoleWorkspace();
+        renderTestcasesTab();
         loadSubmissionHistoryWorkspace();
         loadDiscussionWorkspace();
+        loadAIRecommendations();
+        
+        // Ensure Collab Chat tab is only shown if actively collaborating
+        const chatTab = document.getElementById("wconsole-tab-chat");
+        if (chatTab) {
+            if (isCollaborating) {
+                chatTab.classList.remove("hidden");
+            } else {
+                chatTab.classList.add("hidden");
+                if (activeConsoleTab === "chat") {
+                    switchConsoleTab("testcases");
+                }
+            }
+        }
         
         // Reset left pane tab to description
         switchLeftTab("description");
@@ -730,6 +930,103 @@ async function openWorkspace(slug) {
         
     } catch (e) {
         alert("Failed to load problem: " + e.message);
+    }
+}
+
+function switchTestcaseMode(mode) {
+    currentTestcaseMode = mode;
+    const samplesBtn = document.getElementById("tc-mode-samples-btn");
+    const customBtn = document.getElementById("tc-mode-custom-btn");
+    const samplesContainer = document.getElementById("tc-samples-container");
+    const customContainer = document.getElementById("tc-custom-container");
+    
+    if (mode === "samples") {
+        if (samplesBtn) samplesBtn.className = "px-3 py-1 bg-brand-500/15 text-brand-400 border border-brand-500/30 rounded-lg font-bold text-[10px] uppercase tracking-wider transition";
+        if (customBtn) customBtn.className = "px-3 py-1 bg-dark-300 text-slate-400 hover:text-slate-200 border border-slate-800 rounded-lg font-bold text-[10px] uppercase tracking-wider transition";
+        if (samplesContainer) samplesContainer.classList.remove("hidden");
+        if (customContainer) customContainer.classList.add("hidden");
+    } else {
+        if (customBtn) customBtn.className = "px-3 py-1 bg-brand-500/15 text-brand-400 border border-brand-500/30 rounded-lg font-bold text-[10px] uppercase tracking-wider transition";
+        if (samplesBtn) samplesBtn.className = "px-3 py-1 bg-dark-300 text-slate-400 hover:text-slate-200 border border-slate-800 rounded-lg font-bold text-[10px] uppercase tracking-wider transition";
+        if (samplesContainer) samplesContainer.classList.add("hidden");
+        if (customContainer) customContainer.classList.remove("hidden");
+    }
+}
+
+function renderTestcasesTab() {
+    if (!currentProblem) return;
+    const list = document.getElementById("tc-samples-list");
+    if (!list) return;
+    const sampleCases = currentProblem.test_cases ? currentProblem.test_cases.filter(tc => tc.is_sample) : [];
+    if (sampleCases.length === 0) {
+        list.innerHTML = `<div class="text-slate-500 text-xs py-4 text-center">No sample cases available for this problem.</div>`;
+        return;
+    }
+    
+    list.innerHTML = sampleCases.map((tc, idx) => `
+        <div class="glass-card p-3 rounded-lg border border-slate-800 space-y-2">
+            <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Case ${idx + 1}</div>
+            <div class="grid grid-cols-2 gap-3 text-xs font-mono">
+                <div>
+                    <span class="text-slate-500 text-[10px] block mb-1">Input:</span>
+                    <pre class="bg-dark-300 p-2 rounded border border-slate-850 text-slate-300 overflow-x-auto text-[11px]">${escapeHtml(tc.input)}</pre>
+                </div>
+                <div>
+                    <span class="text-slate-500 text-[10px] block mb-1">Expected Output:</span>
+                    <pre class="bg-dark-300 p-2 rounded border border-slate-850 text-brand-400 overflow-x-auto text-[11px]">${escapeHtml(tc.expected_output)}</pre>
+                </div>
+            </div>
+        </div>
+    `).join("");
+}
+
+function resetStarterCode() {
+    if (!currentProblem || !window.editor) return;
+    const starter = currentProblem.starter_code?.python || "def solve():\n    # Read inputs\n    pass\n";
+    window.editor.setValue(starter);
+    if (isCollaborating && wsCollab && wsCollab.readyState === WebSocket.OPEN) {
+        wsCollab.send(JSON.stringify({
+            type: "sync-code",
+            code: starter
+        }));
+    }
+}
+
+async function loadAIRecommendations() {
+    if (!currentProblem) return;
+    const container = document.getElementById("w-ai-recommendations-container");
+    if (!container) return;
+    
+    try {
+        const recs = await request(`/ai/recommend/${currentProblem.id}`);
+        if (!recs || recs.length === 0) {
+            container.innerHTML = "";
+            return;
+        }
+        
+        container.innerHTML = `
+            <div class="glass-card p-4 rounded-xl border border-brand-500/20 bg-brand-500/5 space-y-3 mt-4">
+                <div class="flex items-center justify-between">
+                    <span class="text-[10px] font-bold text-brand-400 uppercase tracking-widest flex items-center">
+                        <i class="fa-solid fa-wand-magic-sparkles mr-1.5"></i>AI Recommended Challenges
+                    </span>
+                    <span class="text-[9px] text-slate-500 font-mono">Semantic RAG</span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    ${recs.map(r => `
+                        <div onclick="openWorkspace('${r.slug}')" class="bg-dark-300 p-2.5 rounded-lg border border-slate-850 hover:border-brand-500/40 cursor-pointer transition flex items-center justify-between group">
+                            <div>
+                                <div class="font-bold text-slate-200 group-hover:text-brand-400 text-xs transition">${r.title}</div>
+                                <div class="text-[9px] text-slate-500 font-mono capitalize">${r.difficulty_str || r.difficulty}</div>
+                            </div>
+                            <span class="text-xs text-brand-500 group-hover:translate-x-1 transition"><i class="fa-solid fa-arrow-right"></i></span>
+                        </div>
+                    `).join("")}
+                </div>
+            </div>
+        `;
+    } catch (e) {
+        console.error("Failed to load recommendations:", e);
     }
 }
 
@@ -747,7 +1044,7 @@ function renderWorkspaceProblemDetails(pIndex) {
     
     const tagsHtml = (currentProblem.tags || []).map(t => `<span class="text-[11px] bg-slate-800 border border-slate-700/80 px-2 py-0.5 rounded text-slate-400 font-semibold">${t}</span>`).join(" ");
     
-    const sampleCases = currentProblem.test_cases.filter(tc => tc.is_sample);
+    const sampleCases = (currentProblem.test_cases || []).filter(tc => tc.is_sample);
     const sampleCasesHtml = sampleCases.map((tc, idx) => `
         <div class="glass-card rounded-xl p-4 space-y-3 font-mono text-xs border-slate-850 select-text">
             <div class="flex items-center justify-between border-b border-slate-800/80 pb-2">
@@ -804,6 +1101,19 @@ function resetConsoleWorkspace() {
         testcasesContainer.classList.add("hidden");
     }
     
+    // Ensure Collab Chat tab is only visible when actively collaborating
+    const chatTab = document.getElementById("wconsole-tab-chat");
+    if (chatTab) {
+        if (!isCollaborating) {
+            chatTab.classList.add("hidden");
+            if (activeConsoleTab === "chat") {
+                switchConsoleTab("testcases");
+            }
+        } else {
+            chatTab.classList.remove("hidden");
+        }
+    }
+    
     document.getElementById("wbtn-ai-review").disabled = true;
     document.getElementById("wbtn-ai-review").classList.add("text-slate-500");
     document.getElementById("wbtn-ai-hints").disabled = true;
@@ -813,7 +1123,7 @@ function resetConsoleWorkspace() {
     closeWebSocketSub();
 }
 
-// LeetCode-style Run code on samples
+// LeetCode-style Run code on samples or custom input
 async function runCode() {
     if (!currentProblem) return;
     switchConsoleTab("result");
@@ -822,18 +1132,29 @@ async function runCode() {
     document.getElementById("wjudge-status-block").classList.remove("hidden");
     document.getElementById("wjudge-error-block").classList.add("hidden");
     
-    setVerdictLabelWorkspace("RUNNING SAMPLE CASES", "text-brand-400", "fa-solid fa-spinner animate-spin text-brand-400");
+    const isCustom = currentTestcaseMode === "custom" && document.getElementById("tc-custom-input") && document.getElementById("tc-custom-input").value.trim() !== "";
+    const customVal = isCustom ? document.getElementById("tc-custom-input").value.trim() : null;
+    
+    setVerdictLabelWorkspace(isCustom ? "RUNNING CUSTOM INPUT" : "RUNNING SAMPLE CASES", "text-brand-400", "fa-solid fa-spinner animate-spin text-brand-400");
     document.getElementById("wverdict-runtime").innerText = "--";
     document.getElementById("wverdict-memory").innerText = "--";
     
     try {
+        const bodyPayload = {
+            code: window.editor.getValue(),
+            language: "python"
+        };
+        if (customVal !== null) {
+            bodyPayload.custom_input = customVal;
+        }
+        
         const results = await request(`/submissions/run/${currentProblem.id}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code: window.editor.getValue(), language: "python" })
+            body: JSON.stringify(bodyPayload)
         });
         
-        let overallVerdict = "ACCEPTED";
+        let overallVerdict = isCustom ? "FINISHED" : "ACCEPTED";
         let colorClass = "text-brand-400";
         let iconClass = "fa-solid fa-circle-check text-brand-400";
         let maxRuntime = 0;
@@ -855,12 +1176,14 @@ async function runCode() {
         const totalCases = results.length;
         const passedCases = results.filter(r => r.status === "accepted").length;
         let label = overallVerdict;
-        if (totalCases > 0) {
+        if (!isCustom && totalCases > 0) {
             label += ` (${passedCases}/${totalCases} Cases Passed)`;
+        } else if (isCustom) {
+            label = "CUSTOM INPUT EXECUTED";
         }
         
         setVerdictLabelWorkspace(label, colorClass, iconClass);
-        document.getElementById("wverdict-id").innerText = "Sample Run";
+        document.getElementById("wverdict-id").innerText = isCustom ? "Custom" : "Sample Run";
         document.getElementById("wverdict-runtime").innerText = `${maxRuntime.toFixed(3)}s`;
         document.getElementById("wverdict-memory").innerText = `${(maxMemory / 1024).toFixed(1)}MB`;
         
@@ -959,6 +1282,12 @@ function displayFinalVerdictWorkspace(data) {
     const memory = data.memory;
     const error = data.error_message;
     
+    // Always hide and reset error block first
+    const errorBlock = document.getElementById("wjudge-error-block");
+    const errorText = document.getElementById("wjudge-error-text");
+    if (errorBlock) errorBlock.classList.add("hidden");
+    if (errorText) errorText.innerText = "";
+    
     document.getElementById("wbtn-ai-review").disabled = false;
     document.getElementById("wbtn-ai-review").classList.remove("text-slate-500");
     
@@ -976,8 +1305,11 @@ function displayFinalVerdictWorkspace(data) {
         colorClass = "text-brand-400";
         iconClass = "fa-solid fa-circle-check text-brand-400";
         setVerdictLabelWorkspace(label, colorClass, iconClass);
-        document.getElementById("wverdict-runtime").innerText = `${runtime}s`;
-        document.getElementById("wverdict-memory").innerText = `${(memory / 1024).toFixed(1)}MB`;
+        document.getElementById("wverdict-runtime").innerText = runtime ? `${runtime}s` : "--";
+        document.getElementById("wverdict-memory").innerText = memory ? `${(memory / 1024).toFixed(1)}MB` : "--";
+        // Disable debug hints on accepted submissions
+        document.getElementById("wbtn-ai-hints").disabled = true;
+        document.getElementById("wbtn-ai-hints").classList.add("text-slate-500");
     } else {
         document.getElementById("wbtn-ai-hints").disabled = false;
         document.getElementById("wbtn-ai-hints").classList.remove("text-slate-500");
@@ -991,9 +1323,9 @@ function displayFinalVerdictWorkspace(data) {
         document.getElementById("wverdict-runtime").innerText = runtime ? `${runtime}s` : "--";
         document.getElementById("wverdict-memory").innerText = memory ? `${(memory / 1024).toFixed(1)}MB` : "--";
         
-        if (error) {
-            document.getElementById("wjudge-error-block").classList.remove("hidden");
-            document.getElementById("wjudge-error-text").innerText = error;
+        if (error && errorBlock && errorText) {
+            errorBlock.classList.remove("hidden");
+            errorText.innerText = error;
         }
     }
     
@@ -1047,18 +1379,29 @@ async function loadSubmissionHistoryWorkspace() {
 // Workspace Console Tab switcher
 function switchConsoleTab(tab) {
     activeConsoleTab = tab;
-    const tabs = ["result", "ai", "discussions"];
+    const tabs = ["testcases", "result", "ai", "discussions", "chat"];
+    
+    if (tab === "chat") {
+        collabChatUnreadCount = 0;
+        updateCollabChatBadge();
+    }
+    if (tab === "testcases") {
+        renderTestcasesTab();
+    }
     
     tabs.forEach(t => {
         const btn = document.getElementById(`wconsole-tab-${t}`);
         const content = document.getElementById(`wconsole-content-${t}`);
         if (!btn || !content) return;
         
+        const isChatHidden = (t === "chat" && !isCollaborating);
+        const hiddenClass = isChatHidden ? "hidden " : "";
+        
         if (t === tab) {
-            btn.className = "px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 border-brand-500 text-brand-500 transition";
+            btn.className = `${hiddenClass}px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 border-brand-500 text-brand-500 transition`;
             content.classList.remove("hidden");
         } else {
-            btn.className = "px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition";
+            btn.className = `${hiddenClass}px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition`;
             content.classList.add("hidden");
         }
     });
@@ -1187,12 +1530,54 @@ function createCollaborationRoom() {
     }
     
     const select = document.getElementById("lobby-collab-problem-select");
-    const problemSlug = select.value;
+    const problemSlug = select ? select.value : (problems[0] ? problems[0].slug : null);
+    if (!problemSlug) {
+        alert("Please select a problem to host.");
+        return;
+    }
+    hostedProblemSlug = problemSlug;
+    
+    localStorage.setItem("submittery_collab_session", JSON.stringify({
+        roomCode: code,
+        isCreator: true,
+        problemSlug: problemSlug
+    }));
+    
+    const selectedProblem = problems.find(p => p.slug === problemSlug);
+    const titleEl = document.getElementById("lobby-active-problem-title");
+    if (titleEl) {
+        titleEl.innerText = selectedProblem ? selectedProblem.title : problemSlug;
+    }
+    document.getElementById("lobby-room-code-display").innerText = code;
+    document.getElementById("lobby-active-room-card").classList.remove("hidden");
+    document.getElementById("ws-collab-active-indicator").classList.remove("hidden");
     
     connectCollabWS(code, true, problemSlug);
 }
 
-function joinCollaborationRoom(code = null) {
+function enterHostedWorkspace() {
+    const slug = hostedProblemSlug || (currentProblem ? currentProblem.slug : null);
+    if (!slug) return;
+    openWorkspace(slug);
+    if (wsCollab && wsCollab.readyState === WebSocket.OPEN) {
+        wsCollab.send(JSON.stringify({
+            type: "sync-problem",
+            slug: slug
+        }));
+        if (window.editor) {
+            setTimeout(() => {
+                if (wsCollab && wsCollab.readyState === WebSocket.OPEN) {
+                    wsCollab.send(JSON.stringify({
+                        type: "sync-code",
+                        code: window.editor.getValue()
+                    }));
+                }
+            }, 300);
+        }
+    }
+}
+
+async function joinCollaborationRoom(code = null) {
     if (!code) {
         code = document.getElementById("lobby-join-code-input").value.trim().toUpperCase();
     }
@@ -1202,11 +1587,86 @@ function joinCollaborationRoom(code = null) {
         return;
     }
     
-    connectCollabWS(code, false);
+    code = code.trim().toUpperCase();
+    
+    try {
+        const roomInfo = await request(`/ws/room/${code}`);
+        if (!roomInfo || !roomInfo.exists) {
+            alert(`Collaboration session '${code}' was not found or has expired. Please verify the room code.`);
+            return;
+        }
+        
+        const problemSlug = roomInfo.problem_slug;
+        hostedProblemSlug = problemSlug;
+        
+        localStorage.setItem("submittery_collab_session", JSON.stringify({
+            roomCode: code,
+            isCreator: false,
+            problemSlug: problemSlug
+        }));
+        
+        const selectedProblem = problems.find(p => p.slug === problemSlug);
+        const titleEl = document.getElementById("lobby-active-problem-title");
+        if (titleEl) {
+            titleEl.innerText = selectedProblem ? selectedProblem.title : problemSlug;
+        }
+        document.getElementById("lobby-room-code-display").innerText = code;
+        document.getElementById("lobby-active-room-card").classList.remove("hidden");
+        document.getElementById("ws-collab-active-indicator").classList.remove("hidden");
+        
+        connectCollabWS(code, false, problemSlug);
+        
+        // Directly redirect joiner into the problem workspace with live code
+        if (problemSlug) {
+            await openWorkspace(problemSlug, roomInfo.current_code || null);
+        }
+    } catch (e) {
+        alert("Error joining session: " + e.message);
+    }
+}
+
+async function restoreCollabSession() {
+    try {
+        const saved = localStorage.getItem("submittery_collab_session");
+        if (!saved) return;
+        const session = JSON.parse(saved);
+        if (!session || !session.roomCode) return;
+        
+        const code = session.roomCode.trim().toUpperCase();
+        const roomInfo = await request(`/ws/room/${code}`);
+        if (roomInfo && roomInfo.exists) {
+            const slug = roomInfo.problem_slug || session.problemSlug;
+            hostedProblemSlug = slug;
+            
+            const selectedProblem = problems.find(p => p.slug === slug);
+            const titleEl = document.getElementById("lobby-active-problem-title");
+            if (titleEl) {
+                titleEl.innerText = selectedProblem ? selectedProblem.title : slug;
+            }
+            
+            document.getElementById("lobby-room-code-display").innerText = code;
+            document.getElementById("lobby-active-room-card").classList.remove("hidden");
+            document.getElementById("ws-collab-active-indicator").classList.remove("hidden");
+            
+            connectCollabWS(code, session.isCreator, slug);
+        } else {
+            localStorage.removeItem("submittery_collab_session");
+        }
+    } catch (e) {
+        console.log("Collab session restore note:", e);
+    }
 }
 
 function connectCollabWS(roomCode, isCreator, problemSlug = null) {
-    leaveCollaborationRoom();
+    roomCode = roomCode.trim().toUpperCase();
+    if (wsCollab && wsCollab.readyState === WebSocket.OPEN && currentRoomCode === roomCode) {
+        return; // Already actively connected
+    }
+    
+    if (wsCollab) {
+        try { wsCollab.close(); } catch(e) {}
+        wsCollab = null;
+    }
     
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/api/ws/collaboration/${roomCode}`;
@@ -1220,19 +1680,37 @@ function connectCollabWS(roomCode, isCreator, problemSlug = null) {
         document.getElementById("lobby-active-room-card").classList.remove("hidden");
         document.getElementById("ws-collab-active-indicator").classList.remove("hidden");
         
+        // Show Collab Chat tab in console
+        const chatTab = document.getElementById("wconsole-tab-chat");
+        if (chatTab) chatTab.classList.remove("hidden");
+        const chatRoomBadge = document.getElementById("collab-chat-room-badge");
+        if (chatRoomBadge) chatRoomBadge.innerText = roomCode;
+        
+        // Announce presence to peers
+        wsCollab.send(JSON.stringify({
+            type: "peer-join",
+            user: currentUser?.username || "Peer"
+        }));
+        
         if (isCreator && problemSlug) {
-            openWorkspace(problemSlug);
-            setTimeout(() => {
-                if (wsCollab && wsCollab.readyState === WebSocket.OPEN) {
-                    wsCollab.send(JSON.stringify({
-                        type: "sync-problem",
-                        slug: problemSlug
-                    }));
-                }
-            }, 1200);
+            hostedProblemSlug = problemSlug;
+            const selectedProblem = problems.find(p => p.slug === problemSlug);
+            const starter = selectedProblem?.starter_code?.python || "";
+            
+            // Persist room metadata to Redis (preserving live code if already exists)
+            wsCollab.send(JSON.stringify({
+                type: "init-room",
+                slug: problemSlug,
+                user: currentUser?.username || "Host",
+                code: starter
+            }));
+            console.log(`Hosted persistent room ${roomCode} for problem: ${problemSlug}`);
         } else {
-            // Wait for creator to sync the problem
-            console.log("Connected to room. Waiting for host to broadcast problem context...");
+            // Joiner requests immediate context sync
+            wsCollab.send(JSON.stringify({
+                type: "request-sync",
+                user: currentUser?.username || "Peer"
+            }));
         }
     };
     
@@ -1241,16 +1719,68 @@ function connectCollabWS(roomCode, isCreator, problemSlug = null) {
             const data = JSON.parse(event.data);
             
             if (data.type === "sync-problem") {
+                hostedProblemSlug = data.slug;
                 if (!currentProblem || currentProblem.slug !== data.slug) {
                     openWorkspace(data.slug);
+                }
+            } else if (data.type === "room-closed") {
+                alert(data.reason || "The collaboration session was ended.");
+                leaveCollaborationRoom();
+                navigateTo("collab");
+            } else if (data.type === "request-sync" || data.type === "peer-join") {
+                registerActivePeer(data.user);
+                // Host/Peer broadcasts active problem and code to the joining peer
+                const activeSlug = currentProblem?.slug || hostedProblemSlug;
+                if (activeSlug && wsCollab && wsCollab.readyState === WebSocket.OPEN) {
+                    wsCollab.send(JSON.stringify({
+                        type: "sync-problem",
+                        slug: activeSlug
+                    }));
+                    if (window.editor) {
+                        const currentCode = window.editor.getValue();
+                        setTimeout(() => {
+                            if (wsCollab && wsCollab.readyState === WebSocket.OPEN) {
+                                wsCollab.send(JSON.stringify({
+                                    type: "sync-code",
+                                    code: currentCode
+                                }));
+                            }
+                        }, 250);
+                    }
                 }
             } else if (data.type === "sync-code" && window.editor) {
                 const currentVal = window.editor.getValue();
                 if (data.code !== currentVal) {
+                    isReceivingRemoteSync = true;
                     const state = window.editor.saveViewState();
                     window.editor.setValue(data.code);
                     if (state) window.editor.restoreViewState(state);
+                    setTimeout(() => { isReceivingRemoteSync = false; }, 100);
                 }
+            } else if (data.type === "chat-msg") {
+                if (data.user !== currentUser?.username) {
+                    renderCollabMessage({
+                        user: data.user,
+                        avatar: data.avatar,
+                        text: data.text,
+                        time: data.time,
+                        isSelf: false
+                    });
+                    if (activeConsoleTab !== "chat") {
+                        collabChatUnreadCount++;
+                        updateCollabChatBadge();
+                    }
+                }
+            } else if (data.type === "sync-cursor") {
+                renderPeerCursor(data.user, data.position);
+            } else if (data.type === "sync-selection") {
+                renderPeerSelection(data.user, data.selection);
+            } else if (data.type === "peer-leave") {
+                activeRoomPeers.delete(data.user);
+                if (peerCursorDecorations[data.user] && window.editor) {
+                    peerCursorDecorations[data.user] = window.editor.deltaDecorations(peerCursorDecorations[data.user], []);
+                }
+                updatePeerBadge();
             }
         } catch (e) {
             console.error("Collab sync parse error:", e);
@@ -1259,22 +1789,150 @@ function connectCollabWS(roomCode, isCreator, problemSlug = null) {
     
     wsCollab.onclose = () => {
         console.log("Collab connection offline");
-        if (isCollaborating) {
-            leaveCollaborationRoom();
-        }
     };
 }
 
-function leaveCollaborationRoom() {
+function sendCollabChatMessage() {
+    const input = document.getElementById("collab-chat-input");
+    if (!input) return;
+    const text = input.value.trim();
+    if (!text) return;
+    
+    const user = currentUser?.username || "Guest";
+    const avatar = currentUser?.avatar_url || `https://api.dicebear.com/7.x/bottts/svg?seed=${user}`;
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    
+    if (wsCollab && wsCollab.readyState === WebSocket.OPEN) {
+        wsCollab.send(JSON.stringify({
+            type: "chat-msg",
+            user: user,
+            avatar: avatar,
+            text: text,
+            time: time
+        }));
+    }
+    
+    renderCollabMessage({ user, avatar, text, time, isSelf: true });
+    input.value = "";
+}
+
+function escapeHtml(text) {
+    if (!text) return "";
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function renderCollabMessage(msg) {
+    const container = document.getElementById("collab-chat-messages");
+    if (!container) return;
+    
+    // Remove placeholder if present
+    if (container.children.length === 1 && container.children[0].innerText.includes("No messages yet")) {
+        container.innerHTML = "";
+    }
+    
+    const bubble = document.createElement("div");
+    if (msg.isSelf) {
+        bubble.className = "flex items-start justify-end space-x-2";
+        bubble.innerHTML = `
+            <div class="max-w-[75%] space-y-0.5 text-right">
+                <div class="flex items-center justify-end space-x-1.5 text-[9px] text-slate-500 font-mono">
+                    <span class="font-bold text-brand-400">You</span>
+                    <span>${msg.time}</span>
+                </div>
+                <div class="bg-brand-500/20 text-slate-200 p-2 rounded-xl rounded-tr-none border border-brand-500/30 text-xs font-sans whitespace-pre-wrap break-words inline-block text-left">
+                    ${escapeHtml(msg.text)}
+                </div>
+            </div>
+            <img src="${msg.avatar}" class="h-6 w-6 rounded-full border border-brand-500/40 shrink-0 mt-1">
+        `;
+    } else {
+        bubble.className = "flex items-start space-x-2";
+        bubble.innerHTML = `
+            <img src="${msg.avatar}" class="h-6 w-6 rounded-full border border-slate-700 shrink-0 mt-1">
+            <div class="max-w-[75%] space-y-0.5">
+                <div class="flex items-center space-x-1.5 text-[9px] text-slate-500 font-mono">
+                    <span class="font-bold text-slate-300">${msg.user}</span>
+                    <span>${msg.time}</span>
+                </div>
+                <div class="bg-dark-300 text-slate-200 p-2 rounded-xl rounded-tl-none border border-slate-800 text-xs font-sans whitespace-pre-wrap break-words inline-block">
+                    ${escapeHtml(msg.text)}
+                </div>
+            </div>
+        `;
+    }
+    container.appendChild(bubble);
+    container.scrollTop = container.scrollHeight;
+}
+
+function updateCollabChatBadge() {
+    const badge = document.getElementById("collab-chat-unread-badge");
+    if (!badge) return;
+    if (collabChatUnreadCount > 0) {
+        badge.innerText = collabChatUnreadCount;
+        badge.classList.remove("hidden");
+    } else {
+        badge.classList.add("hidden");
+    }
+}
+
+function leaveCollaborationRoom(isExplicitClose = false) {
+    localStorage.removeItem("submittery_collab_session");
+    
+    if (wsCollab && wsCollab.readyState === WebSocket.OPEN) {
+        try {
+            if (isExplicitClose) {
+                wsCollab.send(JSON.stringify({
+                    type: "close-room",
+                    roomCode: currentRoomCode,
+                    user: currentUser?.username || "Peer"
+                }));
+            } else {
+                wsCollab.send(JSON.stringify({
+                    type: "peer-leave",
+                    user: currentUser?.username || "Peer"
+                }));
+            }
+        } catch (e) {}
+    }
+    
     isCollaborating = false;
     currentRoomCode = null;
+    hostedProblemSlug = null;
+    collabChatUnreadCount = 0;
+    
     if (wsCollab) {
         wsCollab.close();
         wsCollab = null;
     }
     
+    // Clean up all remote peer decorations
+    if (window.editor) {
+        Object.keys(peerCursorDecorations).forEach(user => {
+            peerCursorDecorations[user] = window.editor.deltaDecorations(peerCursorDecorations[user], []);
+        });
+    }
+    peerCursorDecorations = {};
+    activeRoomPeers.clear();
+    
     document.getElementById("lobby-active-room-card").classList.add("hidden");
     document.getElementById("ws-collab-active-indicator").classList.add("hidden");
+    const peerBadge = document.getElementById("ws-peer-presence-badge");
+    if (peerBadge) peerBadge.classList.add("hidden");
+    
+    // Hide Collab Chat Tab & Reset Chat
+    const chatTab = document.getElementById("wconsole-tab-chat");
+    if (chatTab) chatTab.classList.add("hidden");
+    if (activeConsoleTab === "chat") {
+        switchConsoleTab("testcases");
+    }
+    const chatMessages = document.getElementById("collab-chat-messages");
+    if (chatMessages) {
+        chatMessages.innerHTML = '<div class="text-slate-500 text-xs text-center py-4">No messages yet. Send a message to your pair programming partner!</div>';
+    }
+    collabChatUnreadCount = 0;
+    updateCollabChatBadge();
 }
 
 function copyRoomCode() {
@@ -1290,7 +1948,108 @@ function copyInviteLink() {
     alert("Invite URL link copied to clipboard!");
 }
 
-// --- ADMIN PANELS ---
+// --- ADMIN WORKSPACE SUITE ---
+let editingProblemId = null;
+let activeAdminTab = "problems";
+
+function switchAdminTab(tab) {
+    activeAdminTab = tab;
+    const tabProblemsBtn = document.getElementById("admin-tab-problems");
+    const tabSubmissionsBtn = document.getElementById("admin-tab-submissions");
+    const contentProblems = document.getElementById("admin-content-problems");
+    const contentSubmissions = document.getElementById("admin-content-submissions");
+    
+    if (tab === "problems") {
+        if (tabProblemsBtn) tabProblemsBtn.className = "px-4 py-2 text-xs font-bold uppercase tracking-wider border-b-2 border-brand-500 text-brand-500 transition";
+        if (tabSubmissionsBtn) tabSubmissionsBtn.className = "px-4 py-2 text-xs font-bold uppercase tracking-wider border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition";
+        if (contentProblems) contentProblems.classList.remove("hidden");
+        if (contentSubmissions) contentSubmissions.classList.add("hidden");
+        renderAdminProblemsTable();
+    } else {
+        if (tabSubmissionsBtn) tabSubmissionsBtn.className = "px-4 py-2 text-xs font-bold uppercase tracking-wider border-b-2 border-brand-500 text-brand-500 transition";
+        if (tabProblemsBtn) tabProblemsBtn.className = "px-4 py-2 text-xs font-bold uppercase tracking-wider border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition";
+        if (contentSubmissions) contentSubmissions.classList.remove("hidden");
+        if (contentProblems) contentProblems.classList.add("hidden");
+        loadAdminSubmissions();
+    }
+}
+
+async function loadAdminData() {
+    if (!problems || problems.length === 0) {
+        await loadProblems();
+    } else {
+        renderAdminProblemsTable();
+    }
+    loadAdminSubmissions();
+}
+
+function renderAdminProblemsTable() {
+    const tbody = document.getElementById("admin-problems-tbody-list");
+    if (!tbody) return;
+    
+    const searchInput = document.getElementById("admin-problems-search-input");
+    const query = searchInput ? searchInput.value.trim().toLowerCase() : "";
+    const diffSelect = document.getElementById("admin-problems-diff-select");
+    const selectedDiff = diffSelect ? diffSelect.value : "all";
+    
+    let filtered = Array.isArray(problems) ? [...problems] : [];
+    if (selectedDiff !== "all") {
+        filtered = filtered.filter(p => p.difficulty === selectedDiff);
+    }
+    if (query) {
+        filtered = filtered.filter(p => 
+            (p.title && p.title.toLowerCase().includes(query)) || 
+            (p.tags && Array.isArray(p.tags) && p.tags.some(t => t.toLowerCase().includes(query)))
+        );
+    }
+    
+    // Update stats counter
+    const probStatEl = document.getElementById("admin-stat-problems");
+    if (probStatEl) probStatEl.innerText = problems.length;
+    
+    if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" class="text-slate-500 text-center py-8 text-xs">No problems found matching filters.</td></tr>`;
+        return;
+    }
+    
+    tbody.innerHTML = filtered.map((p, idx) => {
+        let diffBadge = "text-brand-400 bg-brand-500/10 border-brand-500/20";
+        if (p.difficulty === "medium") diffBadge = "text-amber-400 bg-amber-500/10 border-amber-500/20";
+        if (p.difficulty === "hard") diffBadge = "text-rose-400 bg-rose-500/10 border-rose-500/20";
+        
+        const tagsHtml = (p.tags && Array.isArray(p.tags) ? p.tags : []).map(t => `<span class="text-[10px] bg-slate-800 border border-slate-700/80 px-1.5 py-0.5 rounded text-slate-400 font-semibold">${escapeHtml(t)}</span>`).join(" ");
+        const pIndex = problems.findIndex(prob => prob.id === p.id) + 1;
+        
+        return `
+            <tr class="border-b border-slate-850 hover:bg-slate-900/20 transition group text-xs font-sans">
+                <td class="py-3 px-3 font-bold font-mono text-slate-500">#${pIndex || (idx+1)}</td>
+                <td class="py-3 px-3 font-bold text-slate-200 group-hover:text-brand-400 transition">${escapeHtml(p.title || '')}</td>
+                <td class="py-3 px-3">
+                    <span class="text-[10px] uppercase font-bold px-2 py-0.5 border rounded ${diffBadge}">${p.difficulty || 'easy'}</span>
+                </td>
+                <td class="py-3 px-3 font-mono text-slate-400 text-[11px]">
+                    <span>${p.time_limit !== undefined ? p.time_limit : 1.0}s</span> / <span>${p.memory_limit !== undefined ? p.memory_limit : 256}MB</span>
+                </td>
+                <td class="py-3 px-3">
+                    <div class="flex items-center flex-wrap gap-1">${tagsHtml || '<span class="text-slate-600">None</span>'}</div>
+                </td>
+                <td class="py-3 px-3 text-right">
+                    <div class="flex items-center justify-end space-x-1.5">
+                        <button onclick="openWorkspace('${p.slug}')" class="px-2.5 py-1 bg-slate-800 hover:bg-brand-500 hover:text-dark-300 text-slate-300 rounded font-semibold text-[11px] transition border border-slate-700 hover:border-transparent flex items-center" title="Solve / Preview Problem">
+                            <i class="fa-solid fa-arrow-up-right-from-square mr-1"></i>View
+                        </button>
+                        <button onclick="openEditProblemModal('${p.id}')" class="px-2.5 py-1 bg-brand-500/15 hover:bg-brand-500 text-brand-400 hover:text-dark-300 rounded font-semibold text-[11px] transition border border-brand-500/30 hover:border-transparent flex items-center" title="Edit Problem Details">
+                            <i class="fa-solid fa-pen-to-square mr-1"></i>Edit
+                        </button>
+                        <button onclick="deleteProblem('${p.id}', '${escapeHtml(p.title || '')}')" class="px-2 py-1 bg-red-950/20 hover:bg-red-600 text-red-400 hover:text-white rounded font-semibold text-[11px] transition border border-red-500/20 hover:border-transparent flex items-center" title="Delete Problem">
+                            <i class="fa-solid fa-trash mr-1"></i>Delete
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join("");
+}
 
 async function loadAdminSubmissions() {
     const tbody = document.getElementById("admin-submissions-tbody-log");
@@ -1301,10 +2060,12 @@ async function loadAdminSubmissions() {
         const subs = await request("/submissions/");
         
         // Update stats summary cards
-        document.getElementById("admin-stat-submissions").innerText = subs.length;
-        document.getElementById("admin-stat-problems").innerText = problems.length;
+        const subStatEl = document.getElementById("admin-stat-submissions");
+        if (subStatEl) subStatEl.innerText = subs ? subs.length : 0;
+        const probStatEl = document.getElementById("admin-stat-problems");
+        if (probStatEl) probStatEl.innerText = problems.length;
         
-        if (subs.length === 0) {
+        if (!subs || subs.length === 0) {
             tbody.innerHTML = `<tr><td colspan="6" class="text-slate-500 text-center py-6">No historical runs logged yet.</td></tr>`;
             return;
         }
@@ -1317,23 +2078,47 @@ async function loadAdminSubmissions() {
             const timeStr = new Date(s.created_at).toLocaleString();
             
             return `
-                <tr class="border-b border-slate-850 hover:bg-slate-900/10">
-                    <td class="py-2.5 px-3 font-mono font-bold text-slate-350">${s.id.substring(0,8)}</td>
-                    <td class="py-2.5 px-3 font-mono text-slate-500">${s.user_id.substring(0,6)}</td>
-                    <td class="py-2.5 px-3 font-mono text-slate-500">${s.problem_id.substring(0,6)}</td>
-                    <td class="py-2.5 px-3 text-slate-400 font-semibold">${s.language}</td>
-                    <td class="py-2.5 px-3 font-bold uppercase tracking-wider ${color}">${s.status.replace("_", " ")}</td>
+                <tr class="border-b border-slate-850 hover:bg-slate-900/10 text-xs">
+                    <td class="py-2.5 px-3 font-mono font-bold text-slate-350">${s.id ? s.id.substring(0,8) : '--'}</td>
+                    <td class="py-2.5 px-3 font-mono text-slate-500">${s.user_id ? s.user_id.substring(0,6) : '--'}</td>
+                    <td class="py-2.5 px-3 font-mono text-slate-500">${s.problem_id ? s.problem_id.substring(0,6) : '--'}</td>
+                    <td class="py-2.5 px-3 text-slate-400 font-semibold">${s.language || 'python'}</td>
+                    <td class="py-2.5 px-3 font-bold uppercase tracking-wider ${color}">${(s.status || 'unknown').replace("_", " ")}</td>
                     <td class="py-2.5 px-3 text-slate-500 text-right font-mono">${timeStr}</td>
                 </tr>
             `;
         }).join("");
     } catch (e) {
         console.error("Admin dashboard query failure:", e);
+        tbody.innerHTML = `<tr><td colspan="6" class="text-red-400 text-center py-6">Failed to load submissions: ${e.message}</td></tr>`;
     }
 }
 
-// Problem creation helpers
+// Problem creation & editing helpers
 function openCreateProblemModal() {
+    editingProblemId = null;
+    
+    const titleEl = document.getElementById("create-problem-modal-title");
+    if (titleEl) titleEl.innerHTML = `<i class="fa-solid fa-circle-plus text-brand-500 mr-2"></i><span>Create New Coding Problem</span>`;
+    
+    const submitBtn = document.getElementById("create-problem-submit-btn");
+    if (submitBtn) submitBtn.innerText = "Save and Seed Problem";
+    
+    // Clear all inputs
+    document.getElementById("prob-title").value = "";
+    document.getElementById("prob-difficulty").value = "easy";
+    document.getElementById("prob-description").value = "";
+    document.getElementById("prob-timelimit").value = "1.0";
+    document.getElementById("prob-memlimit").value = "256";
+    document.getElementById("prob-tags").value = "";
+    document.getElementById("prob-starter").value = "def solve():\n    # Read inputs\n    pass\n";
+    
+    // Reset testcase rows to 2 default rows
+    const container = document.getElementById("testcase-rows-container");
+    container.innerHTML = "";
+    addTestCaseRow("", "", true);
+    addTestCaseRow("", "", false);
+    
     const modal = document.getElementById("create-problem-modal");
     modal.classList.remove("hidden");
     setTimeout(() => {
@@ -1342,27 +2127,84 @@ function openCreateProblemModal() {
     }, 50);
 }
 
+async function openEditProblemModal(problemId) {
+    const problem = problems.find(p => p.id === problemId);
+    if (!problem) return;
+    
+    editingProblemId = problem.id;
+    
+    const titleEl = document.getElementById("create-problem-modal-title");
+    if (titleEl) titleEl.innerHTML = `<i class="fa-solid fa-pen-to-square text-brand-500 mr-2"></i><span>Edit Problem: ${escapeHtml(problem.title)}</span>`;
+    
+    const submitBtn = document.getElementById("create-problem-submit-btn");
+    if (submitBtn) submitBtn.innerText = "Update Problem Details";
+    
+    // Pre-fill fields
+    document.getElementById("prob-title").value = problem.title || "";
+    document.getElementById("prob-difficulty").value = problem.difficulty || "easy";
+    document.getElementById("prob-description").value = problem.description || "";
+    document.getElementById("prob-timelimit").value = problem.time_limit || 1.0;
+    document.getElementById("prob-memlimit").value = problem.memory_limit || 256;
+    document.getElementById("prob-tags").value = (problem.tags || []).join(", ");
+    document.getElementById("prob-starter").value = problem.starter_code?.python || "def solve():\n    # Read inputs\n    pass\n";
+    
+    // Fetch full problem details with all test cases
+    const container = document.getElementById("testcase-rows-container");
+    container.innerHTML = `<div class="text-center text-slate-500 py-3 text-xs"><i class="fa-solid fa-spinner animate-spin mr-1"></i>Loading test cases...</div>`;
+    
+    const modal = document.getElementById("create-problem-modal");
+    modal.classList.remove("hidden");
+    setTimeout(() => {
+        modal.classList.remove("opacity-0");
+        modal.querySelector("div").classList.remove("scale-95");
+    }, 50);
+    
+    try {
+        const fullProblem = await request(`/problems/${problem.slug}`);
+        container.innerHTML = "";
+        const testCases = fullProblem.test_cases || [];
+        if (testCases.length > 0) {
+            testCases.forEach(tc => {
+                addTestCaseRow(tc.input, tc.expected_output, tc.is_sample);
+            });
+        } else {
+            addTestCaseRow("", "", true);
+        }
+    } catch (e) {
+        container.innerHTML = "";
+        addTestCaseRow("", "", true);
+    }
+}
+
 function hideCreateProblemModal() {
     const modal = document.getElementById("create-problem-modal");
     modal.classList.add("opacity-0");
     modal.querySelector("div").classList.add("scale-95");
-    setTimeout(() => modal.classList.add("hidden"), 300);
+    setTimeout(() => {
+        modal.classList.add("hidden");
+        editingProblemId = null;
+    }, 300);
 }
 
-function addTestCaseRow() {
+function addTestCaseRow(inputVal = "", outputVal = "", isSample = false) {
     const container = document.getElementById("testcase-rows-container");
     const div = document.createElement("div");
     div.className = "testcase-row glass-card p-3 rounded-lg border border-slate-800/80 grid grid-cols-12 gap-2 items-center";
     div.innerHTML = `
         <div class="col-span-5">
-            <textarea placeholder="Input..." required class="tc-input w-full px-2 py-1 bg-dark-300 border border-slate-800 rounded text-slate-200 font-mono text-[10px]" rows="1"></textarea>
+            <textarea placeholder="Input..." required class="tc-input w-full px-2 py-1 bg-dark-300 border border-slate-800 rounded text-slate-200 font-mono text-[10px]" rows="2">${escapeHtml(inputVal)}</textarea>
         </div>
         <div class="col-span-5">
-            <textarea placeholder="Expected Output..." required class="tc-output w-full px-2 py-1 bg-dark-300 border border-slate-800 rounded text-slate-200 font-mono text-[10px]" rows="1"></textarea>
+            <textarea placeholder="Expected Output..." required class="tc-output w-full px-2 py-1 bg-dark-300 border border-slate-800 rounded text-slate-200 font-mono text-[10px]" rows="2">${escapeHtml(outputVal)}</textarea>
         </div>
-        <div class="col-span-2 text-center flex flex-col items-center">
-            <span class="text-[9px] text-slate-500 font-bold mb-0.5">Sample</span>
-            <input type="checkbox" class="tc-sample h-4 w-4 text-brand-500 bg-dark-300 rounded border-slate-800 focus:ring-brand-500">
+        <div class="col-span-2 text-center flex flex-col items-center justify-between h-full py-0.5">
+            <label class="flex items-center space-x-1 cursor-pointer">
+                <input type="checkbox" class="tc-sample h-3.5 w-3.5 text-brand-500 bg-dark-300 rounded border-slate-800 focus:ring-brand-500" ${isSample ? 'checked' : ''}>
+                <span class="text-[9px] text-slate-400 font-bold">Sample</span>
+            </label>
+            <button type="button" onclick="this.closest('.testcase-row').remove()" class="text-slate-500 hover:text-red-400 text-xs transition mt-1 p-0.5" title="Remove Testcase">
+                <i class="fa-solid fa-trash"></i>
+            </button>
         </div>
     `;
     container.appendChild(div);
@@ -1407,17 +2249,46 @@ async function handleCreateProblemSubmit(e) {
     };
     
     try {
-        await request("/problems/", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        });
+        if (editingProblemId) {
+            // Update problem
+            await request(`/problems/${editingProblemId}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            alert("Problem successfully updated!");
+        } else {
+            // Create problem
+            await request("/problems/", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            alert("Problem successfully created and seeded!");
+        }
         
-        alert("Problem successfully created!");
         hideCreateProblemModal();
-        loadProblems();
+        await loadProblems();
+        renderAdminProblemsTable();
     } catch (err) {
-        alert("Failed to create problem: " + err.message);
+        alert((editingProblemId ? "Failed to update problem: " : "Failed to create problem: ") + err.message);
+    }
+}
+
+async function deleteProblem(problemId, problemTitle) {
+    if (!confirm(`Are you sure you want to permanently delete problem "${problemTitle}"?\n\nThis will remove the problem and all its testcases from the catalog.`)) {
+        return;
+    }
+    
+    try {
+        await request(`/problems/${problemId}`, {
+            method: "DELETE"
+        });
+        alert(`Problem "${problemTitle}" was deleted.`);
+        await loadProblems();
+        renderAdminProblemsTable();
+    } catch (err) {
+        alert("Failed to delete problem: " + err.message);
     }
 }
 
@@ -1492,10 +2363,13 @@ function renderTestcasesOutput(results) {
         tabButtons.forEach((btn, i) => {
             const res = results[i];
             const isPassed = res.status === "accepted";
+            const isNotRun = res.status === "not_run";
             if (i === idx) {
                 btn.className = `px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider text-[10px] bg-dark-200 border border-brand-500 text-brand-500`;
             } else {
-                const statusColor = isPassed ? "text-brand-500 bg-brand-500/5 hover:bg-brand-500/10" : "text-red-400 bg-red-500/5 hover:bg-red-500/10";
+                let statusColor = "text-red-400 bg-red-500/5 hover:bg-red-500/10";
+                if (isPassed) statusColor = "text-brand-500 bg-brand-500/5 hover:bg-brand-500/10";
+                if (isNotRun) statusColor = "text-slate-500 bg-slate-800/20 hover:bg-slate-800/40";
                 btn.className = `px-3 py-1.5 rounded-lg font-semibold uppercase tracking-wider text-[10px] ${statusColor} border border-transparent transition`;
             }
         });
@@ -1503,7 +2377,10 @@ function renderTestcasesOutput(results) {
         // Update details view
         const res = results[idx];
         const isPassed = res.status === "accepted";
-        const statusBadgeColor = isPassed ? "text-brand-500 bg-brand-500/10 border-brand-500/20" : "text-red-400 bg-red-500/10 border-red-500/20";
+        const isNotRun = res.status === "not_run";
+        let statusBadgeColor = "text-red-400 bg-red-500/10 border-red-500/20";
+        if (isPassed) statusBadgeColor = "text-brand-500 bg-brand-500/10 border-brand-500/20";
+        if (isNotRun) statusBadgeColor = "text-slate-400 bg-slate-800/40 border-slate-750";
         
         // Fetch local input/output match
         const matchedCase = (currentProblem?.test_cases || []).find(tc => tc.id === res.id);
@@ -1523,6 +2400,13 @@ function renderTestcasesOutput(results) {
                 <div>
                     <div class="text-[10px] text-slate-500 mb-0.5 font-bold uppercase">Your Output:</div>
                     <pre class="bg-black/40 p-2.5 rounded border border-red-500/10 text-red-400 font-mono whitespace-pre overflow-x-auto select-all">${res.error || "Wrong Answer"}</pre>
+                </div>
+            `;
+        } else if (res.status === "not_run") {
+            outputSection = `
+                <div>
+                    <div class="text-[10px] text-slate-500 mb-0.5 font-bold uppercase">Status:</div>
+                    <div class="text-xs text-slate-500 italic bg-black/40 p-2.5 rounded border border-slate-850">Test case skipped because an earlier test case failed.</div>
                 </div>
             `;
         } else {
@@ -1563,7 +2447,10 @@ function renderTestcasesOutput(results) {
     results.forEach((res, i) => {
         const btn = document.createElement("button");
         const isPassed = res.status === "accepted";
-        const iconClass = isPassed ? "fa-solid fa-circle-check text-brand-500 mr-1" : "fa-solid fa-circle-xmark text-red-500 mr-1";
+        const isNotRun = res.status === "not_run";
+        let iconClass = "fa-solid fa-circle-xmark text-red-500 mr-1";
+        if (isPassed) iconClass = "fa-solid fa-circle-check text-brand-500 mr-1";
+        if (isNotRun) iconClass = "fa-solid fa-circle-minus text-slate-500 mr-1";
         btn.innerHTML = `<i class="${iconClass}"></i>Case ${i + 1}`;
         
         btn.addEventListener("click", () => selectCaseTab(i));
@@ -1605,7 +2492,14 @@ function loadHistoricalCode(subId) {
     const sub = window.historicalSubmissions.find(s => s.id === subId);
     if (sub && window.editor) {
         window.editor.setValue(sub.code);
-        alert("Loaded submission code into the editor workspace.");
+        lastSubmissionId = sub.id;
+        
+        // Switch to result console tab and show verdict / cases
+        switchConsoleTab("result");
+        document.getElementById("wconsole-default-msg").classList.add("hidden");
+        document.getElementById("wjudge-status-block").classList.remove("hidden");
+        document.getElementById("wverdict-id").innerText = sub.id.substring(0, 8);
+        displayFinalVerdictWorkspace(sub);
     }
 }
 

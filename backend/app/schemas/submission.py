@@ -9,7 +9,7 @@ class SubmissionBase(BaseModel):
     language: str = "python"
 
 class SubmissionCreate(SubmissionBase):
-    pass
+    custom_input: Optional[str] = None
 
 class SubmissionResponse(SubmissionBase):
     id: UUID

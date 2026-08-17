@@ -1,11 +1,12 @@
 import os
 import numpy as np
+import httpx
 from sqlalchemy.orm import Session
 from ..config import settings
 from ..models.problem import Problem
 from ..models.submission import Submission
 
-# Try importing the new Google GenAI SDK
+# Try importing the new Google GenAI SDK if available
 try:
     from google import genai
     from google.genai import types
@@ -15,38 +16,145 @@ except ImportError:
 
 class AIService:
     def __init__(self):
-        self.api_key = settings.GEMINI_API_KEY
+        self.api_key = None
         self.client = None
-        
-        if client_available and self.api_key:
-            try:
-                self.client = genai.Client(api_key=self.api_key)
-                print("[*] Gemini Client initialized successfully with API key.")
-            except Exception as e:
-                print(f"[!] Error initializing Gemini Client: {e}")
+        self.default_model = None
+        self.embed_model = None
+        self._ensure_client()
+
+    def _ensure_client(self):
+        from dotenv import load_dotenv, find_dotenv
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        env_path = os.path.join(project_root, ".env")
+        if os.path.exists(env_path):
+            load_dotenv(dotenv_path=env_path, override=True)
+        else:
+            load_dotenv(find_dotenv(usecwd=True), override=True)
+            
+        raw_key = os.environ.get("GEMINI_API_KEY") or getattr(settings, "GEMINI_API_KEY", "")
+        key = str(raw_key).strip().strip('"').strip("'").strip()
+        if key and (not self.api_key or self.api_key != key):
+            self.api_key = key
+            self._discover_models()
+
+    def _discover_models(self):
+        if not self.api_key:
+            return
+        masked_key = f"{self.api_key[:6]}...{self.api_key[-4:]}" if len(self.api_key) > 10 else "(short/empty)"
+        print(f"[*] Validating Gemini API Key: {masked_key}")
+        try:
+            url = "https://generativelanguage.googleapis.com/v1beta/models"
+            headers = {"x-goog-api-key": self.api_key}
+            resp = httpx.get(url, headers=headers, params={"key": self.api_key}, timeout=10.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                models = data.get("models", [])
+                self.valid_gen_models = []
+                self.valid_embed_models = []
+                for m in models:
+                    name = m.get("name", "").replace("models/", "")
+                    methods = m.get("supportedGenerationMethods", [])
+                    
+                    # Filter out TTS, audio-only, image generation, or discontinued preview models
+                    if any(bad in name.lower() for bad in ["tts", "audio", "imagen", "veo", "gemini-2.5"]):
+                        continue
+                        
+                    if "generateContent" in methods:
+                        self.valid_gen_models.append(name)
+                    if "embedContent" in methods:
+                        self.valid_embed_models.append(name)
+                
+                print(f"[*] Available Text Models: {self.valid_gen_models}")
+                
+                preferred = [
+                    'gemini-2.0-flash',
+                    'gemini-2.0-flash-lite',
+                    'gemini-2.0-flash-lite-preview-02-05',
+                    'gemini-1.5-flash',
+                    'gemini-1.5-flash-latest',
+                    'gemini-1.5-flash-8b',
+                    'gemini-1.5-pro',
+                    'gemini-1.5-pro-latest',
+                    'gemini-2.0-flash-exp'
+                ]
+                for p in preferred:
+                    if p in self.valid_gen_models:
+                        self.default_model = p
+                        break
+                if not self.default_model and self.valid_gen_models:
+                    self.default_model = self.valid_gen_models[0]
+                if self.valid_embed_models:
+                    self.embed_model = 'text-embedding-004' if 'text-embedding-004' in self.valid_embed_models else self.valid_embed_models[0]
+                print(f"[*] Connected to Google Gemini! Selected Text Model: '{self.default_model}' (Embeddings: '{self.embed_model}')")
+            else:
+                err_msg = resp.text
+                print(f"[!] Google Gemini Key validation notice ({resp.status_code}): {err_msg}")
+        except Exception as e:
+            print(f"[!] Note on Gemini model discovery: {e}")
 
     def is_active(self) -> bool:
-        return self.client is not None
+        self._ensure_client()
+        return bool(self.api_key and self.api_key.strip())
 
     def generate_response(self, prompt: str, system_instruction: str = None) -> str:
         """
         Generates content from Gemini or falls back to mock responses.
         """
         if self.is_active():
-            try:
-                config = {}
-                if system_instruction:
-                    config["system_instruction"] = system_instruction
-                
-                response = self.client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=prompt,
-                    config=config
-                )
-                return response.text
-            except Exception as e:
-                print(f"[!] Gemini generation error: {e}")
-                return f"[Gemini Error: {str(e)}]. Switched to Mock Mode."
+            candidates = []
+            if self.default_model:
+                candidates.append(self.default_model)
+            if hasattr(self, "valid_gen_models") and self.valid_gen_models:
+                candidates.extend(self.valid_gen_models)
+            candidates.extend([
+                'gemini-2.0-flash',
+                'gemini-2.0-flash-lite',
+                'gemini-1.5-flash',
+                'gemini-1.5-flash-latest',
+                'gemini-1.5-flash-8b',
+                'gemini-1.5-pro'
+            ])
+            
+            seen = set()
+            unique_candidates = [
+                c for c in candidates 
+                if not (c in seen or seen.add(c)) and not any(bad in c.lower() for bad in ["tts", "audio", "imagen", "veo", "gemini-2.5"])
+            ]
+            
+            last_err = None
+            headers = {
+                "x-goog-api-key": self.api_key,
+                "Content-Type": "application/json"
+            }
+            
+            full_prompt = f"{system_instruction}\n\n{prompt}" if system_instruction else prompt
+            
+            for model_name in unique_candidates:
+                for api_ver in ['v1beta', 'v1']:
+                    try:
+                        url = f"https://generativelanguage.googleapis.com/{api_ver}/models/{model_name}:generateContent"
+                        payload = {
+                            "contents": [{"parts": [{"text": full_prompt}]}]
+                        }
+                        
+                        resp = httpx.post(url, headers=headers, params={"key": self.api_key}, json=payload, timeout=35.0)
+                        if resp.status_code == 200:
+                            res_data = resp.json()
+                            candidates_list = res_data.get("candidates", [])
+                            if candidates_list:
+                                content = candidates_list[0].get("content", {})
+                                parts = content.get("parts", [])
+                                if parts:
+                                    self.default_model = model_name
+                                    return parts[0].get("text", "")
+                        else:
+                            last_err = f"HTTP {resp.status_code} ({model_name}, {api_ver}): {resp.text}"
+                    except Exception as e:
+                        last_err = str(e)
+                        continue
+
+            print(f"[!] Gemini generation error across models: {last_err}")
+            return f"[Gemini Error: {str(last_err)}]. Switched to Mock Mode."
         
         # Fallback to Mock Response Generator
         return self._generate_mock_response(prompt, system_instruction)
@@ -57,16 +165,31 @@ class AIService:
         Returns list of floats or mock vector of length 768.
         """
         if self.is_active():
-            try:
-                response = self.client.models.embed_content(
-                    model='text-embedding-004',
-                    contents=text
-                )
-                # response.embeddings contains embedding objects
-                if response.embeddings:
-                    return response.embeddings[0].values
-            except Exception as e:
-                print(f"[!] Embedding error: {e}")
+            embed_models = []
+            if self.embed_model:
+                embed_models.append(self.embed_model)
+            embed_models.extend(['text-embedding-004', 'embedding-001'])
+            
+            seen = set()
+            unique_embed = [c for c in embed_models if not (c in seen or seen.add(c))]
+            
+            for model_name in unique_embed:
+                for api_ver in ['v1beta', 'v1']:
+                    try:
+                        url = f"https://generativelanguage.googleapis.com/{api_ver}/models/{model_name}:embedContent?key={self.api_key}"
+                        payload = {
+                            "content": {"parts": [{"text": text}]}
+                        }
+                        resp = httpx.post(url, json=payload, timeout=12.0)
+                        if resp.status_code == 200:
+                            res_data = resp.json()
+                            embedding = res_data.get("embedding", {})
+                            values = embedding.get("values", [])
+                            if values:
+                                self.embed_model = model_name
+                                return values
+                    except Exception:
+                        continue
         
         # Mock embedding: deterministic vector based on text length and character sums
         np.random.seed(abs(hash(text)) % (2**32))
@@ -215,14 +338,14 @@ Student Question: {query}
         # Complexity Mode
         elif "complexity" in prompt_lower or "complexity" in system.lower():
             if "for " in prompt and "for " in prompt.split("for ", 1)[1]: # nested loop heuristic
-                return """### 📊 Complexity Analysis (Mock Mode)
+                return r"""### 📊 Complexity Analysis (Mock Mode)
 
 - **Time Complexity**: $\mathcal{O}(N^2)$ where $N$ is the length of the input. This is due to the nested loop scanning all pairs.
 - **Space Complexity**: $\mathcal{O}(1)$ since you are using only a constant amount of extra memory space.
 - **Optimization**: You can reduce the time complexity to $\mathcal{O}(N)$ using a Hash Map to store numbers and their indices!
 """
             else:
-                return """### 📊 Complexity Analysis (Mock Mode)
+                return r"""### 📊 Complexity Analysis (Mock Mode)
 
 - **Time Complexity**: $\mathcal{O}(N)$ where $N$ is the number of elements. We traverse the input array exactly once.
 - **Space Complexity**: $\mathcal{O}(N)$ in the worst case to store the visited items in our Hash Map.
@@ -240,7 +363,7 @@ It looks like your code encountered a failure or didn't produce the expected out
 
         # General Question Answering
         else:
-            return """### 💡 AI Mentor Response (Mock Mode)
+            return r"""### 💡 AI Mentor Response (Mock Mode)
 
 I am here to help you study coding algorithms!
 - To optimize your code, try to use a Hash Map to trade space for time (reducing $\mathcal{O}(N^2)$ to $\mathcal{O}(N)$).

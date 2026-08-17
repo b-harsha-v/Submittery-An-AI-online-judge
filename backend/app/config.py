@@ -1,8 +1,14 @@
 import os
 from pydantic_settings import BaseSettings
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-load_dotenv()
+# Automatically locate .env file in the project root or parent directory
+env_path = find_dotenv(usecwd=True)
+if not env_path:
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    env_path = os.path.join(project_root, ".env")
+
+load_dotenv(dotenv_path=env_path)
 
 class Settings(BaseSettings):
     ENV: str = "development"
@@ -30,7 +36,7 @@ class Settings(BaseSettings):
     COMPILER_SERVICE_URL: str = "http://localhost:8002"
     
     class Config:
-        env_file = ".env"
+        env_file = env_path if env_path else ".env"
         extra = "ignore"
 
 settings = Settings()

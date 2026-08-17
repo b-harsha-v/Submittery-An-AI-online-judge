@@ -122,6 +122,7 @@ def process_submission(submission_id: str):
         # Convert memory to KB (compiler script returns RSS in KB)
         submission.memory = max_memory
         submission.error_message = error_message
+        submission.results = results
         db.commit()
         db.refresh(submission)
         

@@ -90,11 +90,13 @@ def run_test_case(code_path: str, input_data: str, expected_output: str, time_li
     cleaned_stdout = "\n".join([line.rstrip() for line in stdout.strip().splitlines()])
     cleaned_expected = "\n".join([line.rstrip() for line in expected_output.strip().splitlines()])
     
-    if cleaned_stdout == cleaned_expected:
+    # If expected_output is empty (custom test case run), any successful exit is accepted
+    if expected_output.strip() == "" or cleaned_stdout == cleaned_expected:
         return {
             "status": "accepted",
             "runtime": duration,
             "memory": memory_used_kb,
+            "stdout": stdout,
             "error": None
         }
     else:
@@ -104,6 +106,7 @@ def run_test_case(code_path: str, input_data: str, expected_output: str, time_li
             "status": "wrong_answer",
             "runtime": duration,
             "memory": memory_used_kb,
+            "stdout": stdout,
             "error": f"Expected: '{expected_output.strip()[:100]}', Got: '{stdout.strip()[:100]}'"
         }
 
@@ -123,7 +126,7 @@ def main():
     
     results = []
     
-    for tc in test_cases:
+    for idx, tc in enumerate(test_cases):
         res = run_test_case(
             code_path=code_path,
             input_data=tc["input"],
@@ -134,9 +137,16 @@ def main():
         res["id"] = tc.get("id")
         results.append(res)
         
-        # If any test case fails, we can stop early (standard online judge behavior)
-        # to save execution resources and time.
+        # If any test case fails, mark remaining test cases as not_run to preserve total count and tabs
         if res["status"] != "accepted":
+            for rem_tc in test_cases[idx + 1:]:
+                results.append({
+                    "id": rem_tc.get("id"),
+                    "status": "not_run",
+                    "runtime": 0.0,
+                    "memory": 0,
+                    "error": "Skipped due to earlier failure"
+                })
             break
             
     # Print the final report as JSON to stdout

@@ -28,11 +28,28 @@ async def collaboration_websocket_endpoint(websocket: WebSocket, problem_id: str
     
     try:
         while True:
-            # Receive sync data/cursors from this peer
+            # Receive sync data/cursors/chat from this peer
             message = await websocket.receive_text()
-            # Broadcast the sync packet to all other peers in the room
-            await websocket_manager.broadcast_to_room(problem_id, websocket, message)
+            # Process Redis state persistence and broadcast
+            await websocket_manager.handle_room_message(problem_id, websocket, message)
     except WebSocketDisconnect:
         pass
     finally:
         await websocket_manager.leave_room(problem_id, websocket)
+
+@router.get("/room/{room_code}")
+async def get_collab_room_info(room_code: str):
+    """
+    Returns collaboration room metadata from Redis if the session is alive.
+    """
+    try:
+        r = await websocket_manager.get_redis()
+        room_key = f"collab:room:{room_code.upper()}"
+        data_str = await r.get(room_key)
+        if data_str:
+            import json
+            data = json.loads(data_str)
+            return {"exists": True, **data}
+    except Exception as e:
+        print(f"[!] Error fetching room info: {e}")
+    return {"exists": False}

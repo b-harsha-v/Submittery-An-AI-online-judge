@@ -8,9 +8,9 @@ from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import docker
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-load_dotenv()
+load_dotenv(find_dotenv(usecwd=True))
 
 app = FastAPI(title="Submittery Compiler Service", version="2.0")
 
@@ -145,7 +145,7 @@ def execute_code(req: ExecutionRequest):
         except Exception as wait_err:
             container.kill()
             raise HTTPException(
-                status_code=status.HTTP_504_TIMEOUT_TIMEOUT,
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 detail=f"Sandbox container execution timed out after {max_duration} seconds."
             )
             

@@ -5,18 +5,23 @@ from uuid import UUID
 from ..database import get_db
 from ..models.submission import Submission, SubmissionStatus
 from ..models.problem import Problem
-from ..models.user import User
+from ..models.user import User, UserRole
 from ..schemas.submission import SubmissionCreate, SubmissionResponse
 from ..services.queue_service import queue_service
-from .deps import get_current_user
+from .deps import get_current_user, get_current_admin
 
 import httpx
 from ..config import settings
 from ..models.problem import TestCase
+from ..core.rate_limiter import RateLimiter
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
 
-@router.post("/run/{problem_id}")
+# Rate limiters
+rate_limit_run = RateLimiter(requests_limit=15, window_seconds=60, scope="run_code")
+rate_limit_submit = RateLimiter(requests_limit=10, window_seconds=60, scope="submit_code")
+
+@router.post("/run/{problem_id}", dependencies=[Depends(rate_limit_run)])
 def run_code(
     problem_id: UUID,
     submission_in: SubmissionCreate,
@@ -31,25 +36,30 @@ def run_code(
             detail="Problem not found"
         )
         
-    # Get ONLY sample test cases
-    test_cases = db.query(TestCase).filter(
-        TestCase.problem_id == problem.id,
-        TestCase.is_sample == True
-    ).all()
-    
-    if not test_cases:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No sample test cases available for this problem."
-        )
+    # Check if user provided custom input
+    if submission_in.custom_input is not None and submission_in.custom_input.strip() != "":
+        test_cases_payload = [
+            {
+                "id": "custom_1",
+                "input": submission_in.custom_input,
+                "expected_output": ""
+            }
+        ]
+        calc_timeout = float(problem.time_limit) + 5.0
+    else:
+        # Get ONLY sample test cases
+        test_cases = db.query(TestCase).filter(
+            TestCase.problem_id == problem.id,
+            TestCase.is_sample == True
+        ).all()
         
-    # Prepare payload for compiler service
-    payload = {
-        "code": submission_in.code,
-        "language": submission_in.language,
-        "time_limit": problem.time_limit,
-        "memory_limit": problem.memory_limit,
-        "test_cases": [
+        if not test_cases:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No sample test cases available for this problem."
+            )
+            
+        test_cases_payload = [
             {
                 "id": str(tc.id),
                 "input": tc.input,
@@ -57,6 +67,15 @@ def run_code(
             }
             for tc in test_cases
         ]
+        calc_timeout = float(problem.time_limit * len(test_cases)) + 5.0
+        
+    # Prepare payload for compiler service
+    payload = {
+        "code": submission_in.code,
+        "language": submission_in.language,
+        "time_limit": problem.time_limit,
+        "memory_limit": problem.memory_limit,
+        "test_cases": test_cases_payload
     }
     
     # Call Compiler Service directly
@@ -65,7 +84,7 @@ def run_code(
             response = client.post(
                 f"{settings.COMPILER_SERVICE_URL}/execute",
                 json=payload,
-                timeout=float(problem.time_limit * len(test_cases)) + 5.0
+                timeout=calc_timeout
             )
         if response.status_code != 200:
             raise HTTPException(
@@ -80,7 +99,7 @@ def run_code(
         )
 
 
-@router.post("/submit/{problem_id}", response_model=SubmissionResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/submit/{problem_id}", response_model=SubmissionResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limit_submit)])
 def submit_code(
     problem_id: UUID,
     submission_in: SubmissionCreate,
@@ -124,6 +143,26 @@ def submit_code(
         
     return submission
 
+@router.get("/me", response_model=List[SubmissionResponse])
+def get_my_submissions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Returns all submissions made by the currently authenticated user across all problems.
+    """
+    submissions = db.query(Submission).filter(
+        Submission.user_id == current_user.id
+    ).order_by(Submission.created_at.desc()).all()
+    return submissions
+
+@router.get("/", response_model=List[SubmissionResponse])
+def get_all_submissions(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin)
+):
+    return db.query(Submission).order_by(Submission.created_at.desc()).limit(50).all()
+
 @router.get("/{id}", response_model=SubmissionResponse)
 def get_submission(
     id: UUID,
@@ -138,7 +177,7 @@ def get_submission(
         )
         
     # Standard users can only view their own submissions
-    if submission.user_id != current_user.id and current_user.role != "admin":
+    if submission.user_id != current_user.id and current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to view this submission"
@@ -157,16 +196,4 @@ def get_problem_submissions(
         Submission.user_id == current_user.id
     ).order_by(Submission.created_at.desc()).all()
     return submissions
-
-@router.get("/", response_model=List[SubmissionResponse])
-def get_all_submissions(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized"
-        )
-    return db.query(Submission).order_by(Submission.created_at.desc()).limit(50).all()
 

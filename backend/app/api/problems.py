@@ -5,7 +5,7 @@ from uuid import UUID
 from ..database import get_db
 from ..models.problem import Problem, TestCase, ProblemDifficulty
 from ..models.user import User, UserRole
-from ..schemas.problem import ProblemCreate, ProblemResponse, ProblemListResponse
+from ..schemas.problem import ProblemCreate, ProblemUpdate, ProblemResponse, ProblemListResponse
 from .deps import get_current_user, get_current_admin
 
 router = APIRouter(prefix="/problems", tags=["problems"])
@@ -107,6 +107,53 @@ def create_problem(
         )
         db.add(tc)
         
+    db.commit()
+    db.refresh(problem)
+    return problem
+
+@router.put("/{id}", response_model=ProblemResponse)
+def update_problem(
+    id: UUID,
+    problem_in: ProblemUpdate,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin)
+):
+    problem = db.query(Problem).filter(Problem.id == id).first()
+    if not problem:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Problem not found"
+        )
+    
+    if problem_in.title is not None:
+        problem.title = problem_in.title
+    if problem_in.description is not None:
+        problem.description = problem_in.description
+    if problem_in.difficulty is not None:
+        problem.difficulty = problem_in.difficulty
+    if problem_in.time_limit is not None:
+        problem.time_limit = problem_in.time_limit
+    if problem_in.memory_limit is not None:
+        problem.memory_limit = problem_in.memory_limit
+    if problem_in.tags is not None:
+        problem.tags = problem_in.tags
+    if problem_in.starter_code is not None:
+        problem.starter_code = problem_in.starter_code
+    if problem_in.is_public is not None:
+        problem.is_public = problem_in.is_public
+        
+    # If test cases are provided, replace existing test cases
+    if problem_in.test_cases is not None:
+        db.query(TestCase).filter(TestCase.problem_id == problem.id).delete()
+        for tc_in in problem_in.test_cases:
+            tc = TestCase(
+                problem_id=problem.id,
+                input=tc_in.input,
+                expected_output=tc_in.expected_output,
+                is_sample=tc_in.is_sample
+            )
+            db.add(tc)
+            
     db.commit()
     db.refresh(problem)
     return problem

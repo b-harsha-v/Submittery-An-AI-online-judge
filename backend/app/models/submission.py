@@ -1,6 +1,6 @@
 import uuid
 import enum
-from sqlalchemy import Column, String, DateTime, Enum, Float, Integer, Text, ForeignKey
+from sqlalchemy import Column, String, DateTime, Enum, Float, Integer, Text, ForeignKey, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -30,6 +30,7 @@ class Submission(Base):
     runtime = Column(Float, nullable=True) # in seconds
     memory = Column(Integer, nullable=True) # in KB (kilobytes)
     error_message = Column(Text, nullable=True) # compile error or runtime exception trace
+    results = Column(JSON, nullable=True) # Per-testcase results list
     
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

@@ -17,6 +17,14 @@ from .deps import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+@router.get("/config")
+def get_auth_config():
+    from ..config import settings
+    client_id = getattr(settings, "GOOGLE_CLIENT_ID", "")
+    if client_id:
+        client_id = client_id.strip().strip('"').strip("'")
+    return {"google_client_id": client_id}
+
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def signup(user_in: UserCreate, db: Session = Depends(get_db)):
     # Check if user already exists
@@ -96,28 +104,34 @@ def refresh_token(refresh_token: str, db: Session = Depends(get_db)):
 
 @router.post("/google", response_model=Token)
 def google_login(login_req: GoogleLoginRequest, db: Session = Depends(get_db)):
-    # Verify Google token (supports mock_ for testing)
+    import re
+    # Verify Google token (supports mock_ for testing and real Google tokens)
     google_profile = verify_google_oauth_token(login_req.id_token)
-    if not google_profile:
+    if not google_profile or not google_profile.get("email"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid Google OAuth token"
+            detail="Invalid Google OAuth token or email could not be verified"
         )
         
     email = google_profile["email"]
     google_id = google_profile["google_id"]
-    name = google_profile["name"]
-    picture = google_profile["picture"]
+    name = google_profile.get("name") or email.split("@")[0]
+    picture = google_profile.get("picture")
     
     # Check if user already exists
-    user = db.query(User).filter(User.email == email).first()
+    user = db.query(User).filter((User.email == email) | (User.google_id == google_id)).first()
     
     if not user:
-        # Create a new user with google details
-        # Make username unique
-        username = name.replace(" ", "_").lower()
-        if db.query(User).filter(User.username == username).first():
-            username = f"{username}_{google_id[:5]}"
+        # Create a clean alphanumeric username
+        clean_base = re.sub(r'[^a-zA-Z0-9_]', '', name.replace(" ", "_").lower())
+        if not clean_base:
+            clean_base = email.split("@")[0]
+            
+        username = clean_base
+        counter = 1
+        while db.query(User).filter(User.username == username).first():
+            username = f"{clean_base}_{counter}"
+            counter += 1
             
         user = User(
             email=email,
@@ -130,14 +144,14 @@ def google_login(login_req: GoogleLoginRequest, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(user)
     else:
-        # Link google_id if not linked
+        # Link google_id or avatar if not yet present
         if not user.google_id:
             user.google_id = google_id
-            if picture and not user.avatar_url:
-                user.avatar_url = picture
-            db.commit()
-            db.refresh(user)
-            
+        if picture and not user.avatar_url:
+            user.avatar_url = picture
+        db.commit()
+        db.refresh(user)
+        
     access_token = create_access_token(subject=user.id)
     refresh_token = create_refresh_token(subject=user.id)
     return {

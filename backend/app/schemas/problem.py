@@ -31,6 +31,17 @@ class ProblemBase(BaseModel):
 class ProblemCreate(ProblemBase):
     test_cases: List[TestCaseCreate]
 
+class ProblemUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    difficulty: Optional[ProblemDifficulty] = None
+    time_limit: Optional[float] = None
+    memory_limit: Optional[int] = None
+    tags: Optional[List[str]] = None
+    starter_code: Optional[Dict[str, str]] = None
+    is_public: Optional[bool] = None
+    test_cases: Optional[List[TestCaseCreate]] = None
+
 class ProblemResponse(BaseModel):
     id: UUID
     title: str
@@ -53,6 +64,8 @@ class ProblemListResponse(BaseModel):
     title: str
     slug: str
     difficulty: ProblemDifficulty
+    time_limit: Optional[float] = 1.0
+    memory_limit: Optional[int] = 256
     tags: Optional[List[str]] = []
     is_public: bool
 
